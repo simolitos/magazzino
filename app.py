@@ -5,13 +5,13 @@ import math
 import io
 
 # --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="Gestione Magazzino Pro", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Magazzino Mensile", layout="wide", initial_sidebar_state="collapsed")
 
-# COSTANTI
-MESI_COPERTURA = 2.0      # Intervallo tra i tuoi ordini
-MESI_BUFFER = 0.5         # 2 settimane di attesa corriere
-TARGET_MESI = MESI_COPERTURA + MESI_BUFFER # Totale 2.5 mesi da coprire
-MIN_SCORTA_CAL = 3        # Minimo scatole per i Calibratori
+# COSTANTI (MODIFICATE PER RISPARMIARE SPAZIO)
+MESI_COPERTURA = 1.0      # Copertura per 1 mese esatto
+MESI_BUFFER = 0.5         # + 2 settimane di sicurezza corriere
+TARGET_MESI = MESI_COPERTURA + MESI_BUFFER # Totale: 1.5 Mesi di scorta
+MIN_SCORTA_CAL = 3        # Minimo 3 scatole per i Calibratori (sicurezza)
 
 # --- CARICAMENTO DATI ---
 @st.cache_data
@@ -64,13 +64,14 @@ if 'storico' not in st.session_state:
     st.session_state['storico'] = []
 
 # --- INTERFACCIA ---
-st.title("🏥 Magazzino - Gestione & Riordino")
+st.title("🏥 Magazzino - Gestione Mensile")
+st.caption(f"Target Scorta: {TARGET_MESI} Mesi (1 Mese consumo + 2 sett. corriere)")
 
 df_master = load_master_data()
 
 if not df_master.empty:
     
-    tab_mov, tab_ordini, tab_scadenze = st.tabs(["⚡ Movimenti", "📦 Calcolo Ordine (2.5 Mesi)", "⚠️ Scadenze"])
+    tab_mov, tab_ordini, tab_scadenze = st.tabs(["⚡ Movimenti", "📦 Calcolo Ordine (1.5 Mesi)", "⚠️ Scadenze"])
 
     # === TAB 1: MOVIMENTI ===
     with tab_mov:
@@ -85,9 +86,9 @@ if not df_master.empty:
         categoria_art = str(row_art.get('Categoria', '')).upper()
         
         with col_info:
-            st.info(f"Conf: {row_art.get('Confezione', '-')}\nTipo: {row_art.get('Categoria', 'ND')}")
+            st.info(f"Conf: {row_art.get('Confezione', '-')}")
             if "CAL" in categoria_art:
-                st.warning(f"⚠️ CALIBRATORE\nScorta Minima: {MIN_SCORTA_CAL}")
+                st.warning(f"⚠️ CALIBRATORE\nMinimo: {MIN_SCORTA_CAL} pz")
 
         c1, c2 = st.columns([1, 2])
         with c1:
@@ -145,8 +146,7 @@ if not df_master.empty:
 
     # === TAB 2: CALCOLO ORDINE ===
     with tab_ordini:
-        st.markdown(f"### 📊 Ordine per Copertura {TARGET_MESI} Mesi")
-        st.caption(f"Nota: Per i prodotti CAL (Calibratori) il sistema impone un minimo di {MIN_SCORTA_CAL} scatole.")
+        st.markdown(f"### 📊 Calcolo Fabbisogno (1 Mese + 2 Settimane)")
         
         df_calc = df_master.copy()
         
@@ -165,13 +165,12 @@ if not df_master.empty:
         
         # 2. Calcolo Obiettivo Scorta (CON REGOLA CALIBRATORI)
         def calcola_target(row):
-            # Calcolo base matematico
+            # Target = Consumo Mensile * 1.5
             base_target = math.ceil(row['Consumo_Mensile_Scatole'] * TARGET_MESI)
             
             # Controllo se è un Calibratore
             categoria = str(row['Categoria']).upper()
             if "CAL" in categoria:
-                # Se è Calibratore, il target è ALMENO 3, oppure quello calcolato se maggiore
                 return max(base_target, MIN_SCORTA_CAL)
             
             return base_target
@@ -190,14 +189,13 @@ if not df_master.empty:
         
         # 5. Semaforo
         def get_semaforo(row):
-            # Se è Calibratore e siamo sotto scorta minima
             categoria = str(row['Categoria']).upper()
             if "CAL" in categoria and row['Giacenza'] < MIN_SCORTA_CAL:
                 return "🔴 SOTTO MINIMO (CAL)"
 
             if row['Consumo_Mensile_Scatole'] == 0 and "CAL" not in categoria: return "⚪ Dati mancanti"
             if row['Giacenza'] == 0: return "🔴 ESAURITO"
-            if row['Mesi_Autonomia'] < MESI_BUFFER: return "🟠 URGENTE"
+            if row['Mesi_Autonomia'] < MESI_BUFFER: return "🟠 URGENTE (<2 sett)"
             if row['Da_Ordinare'] > 0: return "🟡 RIORDINARE"
             return "🟢 COPERTO"
 
@@ -210,11 +208,12 @@ if not df_master.empty:
             df_view = df_view[df_view['Stato'] != "🟢 COPERTO"]
 
         st.dataframe(
-            df_view[['Stato', 'Descrizione', 'Categoria', 'Giacenza', 'Scorta_Target', 'Da_Ordinare']],
+            df_view[['Stato', 'Descrizione', 'Giacenza', 'Scorta_Target', 'Da_Ordinare', 'Mesi_Autonomia']],
             use_container_width=True,
             column_config={
-                "Scorta_Target": st.column_config.NumberColumn("Target", help=f"Obiettivo (Minimo {MIN_SCORTA_CAL} per CAL)"),
-                "Da_Ordinare": st.column_config.NumberColumn("🛒 DA ORDINARE")
+                "Scorta_Target": st.column_config.NumberColumn("Target (1.5 Mesi)", help="Scorta Ideale: 1 mese + 2 settimane"),
+                "Da_Ordinare": st.column_config.NumberColumn("🛒 DA ORDINARE"),
+                "Mesi_Autonomia": st.column_config.NumberColumn("Autonomia (Mesi)", format="%.1f")
             }
         )
         
@@ -224,7 +223,7 @@ if not df_master.empty:
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 df_out.to_excel(writer, index=False)
-            st.download_button("Download Excel", data=buffer.getvalue(), file_name="ordine_bimestrale.xlsx")
+            st.download_button("Download Excel", data=buffer.getvalue(), file_name="ordine_mensile.xlsx")
 
     # === TAB 3: SCADENZE ===
     with tab_scadenze:

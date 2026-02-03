@@ -1,132 +1,193 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import io
 
-# Configurazione della pagina
-st.set_page_config(page_title="Gestione Magazzino Abbott", layout="wide")
+# Configurazione Pagina
+st.set_page_config(page_title="Abbott Manager Pro", layout="wide")
 
-# Funzione per caricare i dati (adattata al TUO file specifico)
-def load_data():
+# --- FUNZIONI DI CARICAMENTO ---
+@st.cache_data
+def load_master_data():
     try:
-        # Legge il file excel
+        # Carica il file Excel
         df = pd.read_excel('dati.xlsx', engine='openpyxl')
         
-        # 1. Rinomina le colonne del tuo Excel in nomi standard per l'app
-        # Mappa: Nome nel tuo Excel -> Nome nell'App
-        column_mapping = {
+        # Mappatura colonne (Adattata al tuo file specifico)
+        # Assicurati che nel tuo Excel la colonna dei consumi si chiami '# Kit/Mese' o simile
+        col_map = {
             'LN ABBOTT': 'Codice',
             'Descrizione commerciale': 'Descrizione',
             'Rgt/Cal/QC/Cons': 'Categoria',
-            'Conf.to': 'Confezione',
-            'LOB': 'Reparto',
-            '# Kit/Mese': 'Consumo_Mensile' # Prendo questa come riferimento se serve
+            '# Kit/Mese': 'Fabbisogno_Mensile', 
+            'Conf.to': 'Confezione'
         }
         
-        # Rinomina solo le colonne che trova
-        df = df.rename(columns=column_mapping)
+        # Rinomina e pulisci
+        df = df.rename(columns=col_map)
+        df = df[df['Descrizione'].notna()] # Rimuove righe vuote
         
-        # 2. Pulizia Dati
-        # Mantiene solo le righe che hanno almeno una Descrizione valida
-        df = df[df['Descrizione'].notna()]
+        # Converte il fabbisogno in numeri (gestisce errori se c'è testo)
+        df['Fabbisogno_Mensile'] = pd.to_numeric(df['Fabbisogno_Mensile'], errors='coerce').fillna(0)
         
-        # Riempie i valori vuoti per estetica
-        df['Codice'] = df['Codice'].fillna('-')
-        df['Categoria'] = df['Categoria'].fillna('Altro')
-        df['Reparto'] = df['Reparto'].fillna('Generale')
+        # Crea chiave univoca
+        df['Prodotto_Label'] = df['Codice'].astype(str) + " | " + df['Descrizione']
         
-        # Crea una colonna univoca per la ricerca (Codice + Descrizione)
-        df['Prodotto_Completo'] = df['Codice'].astype(str) + " - " + df['Descrizione']
-        
-        return df
+        return df[['Codice', 'Descrizione', 'Categoria', 'Fabbisogno_Mensile', 'Confezione', 'Prodotto_Label']]
     except Exception as e:
-        st.error(f"Errore nel caricamento del file dati.xlsx: {e}")
+        st.error(f"Errore caricamento dati: {e}")
         return pd.DataFrame()
 
-# Inizializzazione Session State (Memoria dell'app)
-if 'movimenti' not in st.session_state:
-    st.session_state['movimenti'] = []
+# --- GESTIONE STATO (MEMORIA) ---
+# Qui simuliamo il magazzino reale. 
+# NOTA: Quando ricarichi la pagina web, questo si resetta se non colleghi un database esterno.
+if 'magazzino_virtuale' not in st.session_state:
+    # Dizionario: Codice -> Quantità Attuale
+    st.session_state['magazzino_virtuale'] = {} 
 
-# --- INTERFACCIA UTENTE ---
+if 'storico_movimenti' not in st.session_state:
+    st.session_state['storico_movimenti'] = []
 
-st.title("📦 Gestione Magazzino - Abbott Alinity")
+# --- INTERFACCIA ---
+st.title("🏥 Abbott Alinity - Smart Manager")
 
-# Caricamento dati
-df_prodotti = load_data()
+df_master = load_master_data()
 
-if not df_prodotti.empty:
+if not df_master.empty:
     
-    # 1. SEZIONE INSERIMENTO MOVIMENTO
-    st.header("Nuovo Movimento")
-    
-    col1, col2, col3 = st.columns([3, 1, 1])
-    
-    with col1:
-        # Menu a tendina con ricerca
-        lista_prodotti = df_prodotti['Prodotto_Completo'].tolist()
-        prodotto_selezionato = st.selectbox("Cerca Prodotto (Scrivi nome o codice)", lista_prodotti)
-    
-    with col2:
-        quantita = st.number_input("Quantità", min_value=1, value=1, step=1)
-        
-    with col3:
-        tipo_movimento = st.radio("Tipo", ["Prelievo ➖", "Carico ➕"], horizontal=True)
+    # Creiamo due schede: Operatività e Analisi
+    tab1, tab2 = st.tabs(["📦 Movimenti & Magazzino", "📊 Dashboard Ordini & Allarmi"])
 
-    if st.button("Registra Movimento", type="primary"):
-        # Recupera i dettagli del prodotto selezionato
-        dettagli = df_prodotti[df_prodotti['Prodotto_Completo'] == prodotto_selezionato].iloc[0]
+    # === TAB 1: OPERATIVITÀ ===
+    with tab1:
+        st.subheader("Registra Entrate/Uscite")
         
-        ora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-        segno = "-" if "Prelievo" in tipo_movimento else "+"
+        col_in1, col_in2, col_in3 = st.columns([3, 1, 1])
         
-        nuovo_movimento = {
-            "Data": ora,
-            "Codice": dettagli['Codice'],
-            "Descrizione": dettagli['Descrizione'],
-            "Categoria": dettagli['Categoria'],
-            "Reparto": dettagli['Reparto'],
-            "Quantità": f"{segno}{quantita}",
-            "Confezione": dettagli['Confezione']
-        }
+        with col_in1:
+            prod_list = df_master['Prodotto_Label'].tolist()
+            prodotto_scelto = st.selectbox("Seleziona Prodotto", prod_list)
         
-        # Aggiunge in cima alla lista
-        st.session_state['movimenti'].insert(0, nuovo_movimento)
-        st.success(f"Registrato: {segno}{quantita} x {dettagli['Descrizione']}")
-
-    st.divider()
-
-    # 2. SEZIONE STORICO E EXPORT
-    st.header("📝 Storico Movimenti")
-
-    if st.session_state['movimenti']:
-        # Crea DataFrame dallo storico
-        df_storico = pd.DataFrame(st.session_state['movimenti'])
-        
-        # Mostra tabella colorata
-        st.dataframe(df_storico, use_container_width=True)
-        
-        # Bottone Export Excel
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df_storico.to_excel(writer, index=False, sheet_name='Movimenti')
+        with col_in2:
+            qty = st.number_input("Quantità (Scatole)", min_value=1, value=1)
             
-        st.download_button(
-            label="📥 Scarica Excel Movimenti",
-            data=buffer.getvalue(),
-            file_name=f"movimenti_magazzino_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        with col_in3:
+            azione = st.radio("Azione", ["Prelevo (Uso)", "Carico (Arrivo)"], label_visibility="collapsed")
+
+        # Opzione Scadenza (Solo se carico)
+        scadenza_input = None
+        if "Carico" in azione:
+            scadenza_input = st.date_input("Scadenza (Opzionale)", value=None)
+
+        if st.button("Registra Movimento", type="primary"):
+            # Logica aggiornamento
+            row = df_master[df_master['Prodotto_Label'] == prodotto_scelto].iloc[0]
+            codice = row['Codice']
+            
+            # Aggiorna Giacenza Virtuale
+            current_stock = st.session_state['magazzino_virtuale'].get(codice, 0)
+            
+            if "Carico" in azione:
+                nuova_giacenza = current_stock + qty
+                segno = "+"
+            else:
+                nuova_giacenza = max(0, current_stock - qty) # Non andiamo sotto zero
+                segno = "-"
+                
+            st.session_state['magazzino_virtuale'][codice] = nuova_giacenza
+            
+            # Registra nello storico
+            movimento = {
+                "Data": datetime.now().strftime("%d/%m/%Y %H:%M"),
+                "Prodotto": row['Descrizione'],
+                "Codice": codice,
+                "Azione": "Carico" if "Carico" in azione else "Prelievo",
+                "Quantità": f"{segno}{qty}",
+                "Giacenza Post-Mov": nuova_giacenza,
+                "Scadenza": scadenza_input.strftime("%d/%m/%Y") if scadenza_input else "-"
+            }
+            st.session_state['storico_movimenti'].insert(0, movimento)
+            st.success(f"Registrato! Nuova giacenza stimata: {nuova_giacenza}")
+
+        st.divider()
+        
+        # Tabella Movimenti Recenti
+        st.write("📝 Ultimi Movimenti")
+        if st.session_state['storico_movimenti']:
+            st.dataframe(pd.DataFrame(st.session_state['storico_movimenti']), use_container_width=True)
+
+    # === TAB 2: DASHBOARD INTELLIGENTE ===
+    with tab2:
+        st.header("Analisi Fabbisogno e Ordini")
+        st.info("Questa tabella confronta la tua giacenza attuale con il consumo mensile previsto dal file Excel.")
+        
+        # Creiamo il DataFrame per l'analisi
+        # 1. Prendiamo il master
+        df_analisi = df_master.copy()
+        
+        # 2. Aggiungiamo la colonna "Giacenza Attuale" prendendola dalla memoria dell'app
+        df_analisi['Giacenza_Attuale'] = df_analisi['Codice'].map(st.session_state['magazzino_virtuale']).fillna(0)
+        
+        # 3. Calcoli Intelligenti
+        # Copertura: Quanti mesi copro con la giacenza attuale?
+        # Se consumo è 0, evito divisione per zero
+        df_analisi['Copertura_Mesi'] = df_analisi.apply(
+            lambda x: round(x['Giacenza_Attuale'] / x['Fabbisogno_Mensile'], 1) if x['Fabbisogno_Mensile'] > 0 else 99, axis=1
         )
         
-        if st.button("🗑️ Cancella tutto lo storico"):
-            st.session_state['movimenti'] = []
-            st.rerun()
-            
-    else:
-        st.info("Nessun movimento registrato in questa sessione.")
+        # Da Ordinare: Se ho meno del fabbisogno, suggerisci la differenza
+        df_analisi['DA_ORDINARE'] = df_analisi.apply(
+            lambda x: max(0, x['Fabbisogno_Mensile'] - x['Giacenza_Attuale']), axis=1
+        )
+        
+        # Status (Semaforo)
+        def get_status(row):
+            if row['Fabbisogno_Mensile'] == 0:
+                return "⚪ Non definito"
+            if row['Giacenza_Attuale'] >= row['Fabbisogno_Mensile']:
+                return "🟢 OK"
+            elif row['Giacenza_Attuale'] < (row['Fabbisogno_Mensile'] * 0.2): # Meno del 20%
+                return "🔴 CRITICO"
+            else:
+                return "🟡 ORDINARE" # Sotto soglia ma non a zero
 
-    # 3. VISUALIZZAZIONE DATI MASTER (Opzionale, per controllo)
-    with st.expander("🔍 Vedi Lista Completa Prodotti (Database)"):
-        st.dataframe(df_prodotti[['Reparto', 'Categoria', 'Codice', 'Descrizione', 'Confezione']])
+        df_analisi['Stato'] = df_analisi.apply(get_status, axis=1)
+        
+        # Ordiniamo per urgenza (Prima i rossi)
+        df_analisi = df_analisi.sort_values(by=['Copertura_Mesi'])
+        
+        # Filtri
+        filtro_stato = st.multiselect("Filtra per Stato", ["🔴 CRITICO", "🟡 ORDINARE", "🟢 OK"], default=["🔴 CRITICO", "🟡 ORDINARE"])
+        if filtro_stato:
+            df_view = df_analisi[df_analisi['Stato'].isin(filtro_stato)]
+        else:
+            df_view = df_analisi
+
+        # Visualizzazione con colori
+        st.dataframe(
+            df_view[['Stato', 'Descrizione', 'Giacenza_Attuale', 'Fabbisogno_Mensile', 'DA_ORDINARE', 'Copertura_Mesi']],
+            use_container_width=True,
+            column_config={
+                "Stato": st.column_config.TextColumn("Status"),
+                "Copertura_Mesi": st.column_config.ProgressColumn("Copertura Mese", min_value=0, max_value=2, format="%.1f mesi"),
+            }
+        )
+        
+        # EXPORT ORDINE
+        st.write("### 📤 Esporta Lista Ordine")
+        # Filtra solo quelli che hanno qualcosa da ordinare
+        df_ordine = df_analisi[df_analisi['DA_ORDINARE'] > 0][['Codice', 'Descrizione', 'DA_ORDINARE', 'Confezione']]
+        
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            df_ordine.to_excel(writer, index=False, sheet_name='Proposta_Ordine')
+            
+        st.download_button(
+            label="Scarica Excel Ordini Suggeriti",
+            data=buffer.getvalue(),
+            file_name=f"ordine_suggerito_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 else:
-    st.warning("Il file dati.xlsx sembra vuoto o non leggibile. Controlla di averlo caricato su GitHub.")
+    st.error("Non trovo dati.xlsx o il file è vuoto.")

@@ -1,147 +1,132 @@
 import streamlit as st
 import pandas as pd
-import math
+from datetime import datetime
+import io
 
-# --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="Ordini Laboratorio", page_icon="🧪", layout="wide")
+# Configurazione della pagina
+st.set_page_config(page_title="Gestione Magazzino Abbott", layout="wide")
 
-# --- FUNZIONE CARICAMENTO DATI ---
-@st.cache_data
+# Funzione per caricare i dati (adattata al TUO file specifico)
 def load_data():
-    # Cerca il file Excel. Assicurati di caricarlo su GitHub con questo nome esatto:
-    file_name = "dati.xlsx" 
-    
     try:
-        # Legge il file Excel
-        df = pd.read_excel(file_name)
+        # Legge il file excel
+        df = pd.read_excel('dati.xlsx', engine='openpyxl')
         
-        # MAPPATURA COLONNE (Adatto il codice ai nomi del tuo file originale)
-        # Il tuo file ha queste colonne: 'LOB', 'Rgt/Cal/QC/Cons', 'Descrizione commerciale', 'KIT', 'Test TOT MEDI/MESE Aggiustati'
-        
-        # Rinomino le colonne per comodità
-        rename_map = {
-            'Rgt/Cal/QC/Cons': 'Tipo',
-            'Descrizione commerciale': 'Prodotto',
-            'KIT': 'Test_per_Kit',
-            'Test TOT MEDI/MESE Aggiustati': 'Fabbisogno_Mensile'
+        # 1. Rinomina le colonne del tuo Excel in nomi standard per l'app
+        # Mappa: Nome nel tuo Excel -> Nome nell'App
+        column_mapping = {
+            'LN ABBOTT': 'Codice',
+            'Descrizione commerciale': 'Descrizione',
+            'Rgt/Cal/QC/Cons': 'Categoria',
+            'Conf.to': 'Confezione',
+            'LOB': 'Reparto',
+            '# Kit/Mese': 'Consumo_Mensile' # Prendo questa come riferimento se serve
         }
         
-        # Tengo solo le colonne utili e rinomino
-        useful_cols = ['LOB'] + list(rename_map.keys())
-        # Filtro per evitare errori se mancano colonne
-        available_cols = [c for c in useful_cols if c in df.columns]
-        df_clean = df[available_cols].rename(columns=rename_map)
+        # Rinomina solo le colonne che trova
+        df = df.rename(columns=column_mapping)
         
-        # Pulizia dati numerici (trasforma errori o vuoti in 0)
-        df_clean['Test_per_Kit'] = pd.to_numeric(df_clean['Test_per_Kit'], errors='coerce').fillna(0)
-        df_clean['Fabbisogno_Mensile'] = pd.to_numeric(df_clean['Fabbisogno_Mensile'], errors='coerce').fillna(0)
+        # 2. Pulizia Dati
+        # Mantiene solo le righe che hanno almeno una Descrizione valida
+        df = df[df['Descrizione'].notna()]
         
-        return df_clean
+        # Riempie i valori vuoti per estetica
+        df['Codice'] = df['Codice'].fillna('-')
+        df['Categoria'] = df['Categoria'].fillna('Altro')
+        df['Reparto'] = df['Reparto'].fillna('Generale')
         
-    except FileNotFoundError:
-        return None
+        # Crea una colonna univoca per la ricerca (Codice + Descrizione)
+        df['Prodotto_Completo'] = df['Codice'].astype(str) + " - " + df['Descrizione']
+        
+        return df
+    except Exception as e:
+        st.error(f"Errore nel caricamento del file dati.xlsx: {e}")
+        return pd.DataFrame()
+
+# Inizializzazione Session State (Memoria dell'app)
+if 'movimenti' not in st.session_state:
+    st.session_state['movimenti'] = []
 
 # --- INTERFACCIA UTENTE ---
-st.title("🧪 Magazzino & Ordini")
 
-# Caricamento
-if 'data' not in st.session_state:
-    st.session_state.data = load_data()
+st.title("📦 Gestione Magazzino - Abbott Alinity")
 
-df = st.session_state.data
+# Caricamento dati
+df_prodotti = load_data()
 
-if df is None:
-    st.error("⚠️ File 'dati.xlsx' non trovato!")
-    st.info("Carica il tuo file Excel originale su GitHub e rinominalo 'dati.xlsx'.")
+if not df_prodotti.empty:
+    
+    # 1. SEZIONE INSERIMENTO MOVIMENTO
+    st.header("Nuovo Movimento")
+    
+    col1, col2, col3 = st.columns([3, 1, 1])
+    
+    with col1:
+        # Menu a tendina con ricerca
+        lista_prodotti = df_prodotti['Prodotto_Completo'].tolist()
+        prodotto_selezionato = st.selectbox("Cerca Prodotto (Scrivi nome o codice)", lista_prodotti)
+    
+    with col2:
+        quantita = st.number_input("Quantità", min_value=1, value=1, step=1)
+        
+    with col3:
+        tipo_movimento = st.radio("Tipo", ["Prelievo ➖", "Carico ➕"], horizontal=True)
+
+    if st.button("Registra Movimento", type="primary"):
+        # Recupera i dettagli del prodotto selezionato
+        dettagli = df_prodotti[df_prodotti['Prodotto_Completo'] == prodotto_selezionato].iloc[0]
+        
+        ora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        segno = "-" if "Prelievo" in tipo_movimento else "+"
+        
+        nuovo_movimento = {
+            "Data": ora,
+            "Codice": dettagli['Codice'],
+            "Descrizione": dettagli['Descrizione'],
+            "Categoria": dettagli['Categoria'],
+            "Reparto": dettagli['Reparto'],
+            "Quantità": f"{segno}{quantita}",
+            "Confezione": dettagli['Confezione']
+        }
+        
+        # Aggiunge in cima alla lista
+        st.session_state['movimenti'].insert(0, nuovo_movimento)
+        st.success(f"Registrato: {segno}{quantita} x {dettagli['Descrizione']}")
+
+    st.divider()
+
+    # 2. SEZIONE STORICO E EXPORT
+    st.header("📝 Storico Movimenti")
+
+    if st.session_state['movimenti']:
+        # Crea DataFrame dallo storico
+        df_storico = pd.DataFrame(st.session_state['movimenti'])
+        
+        # Mostra tabella colorata
+        st.dataframe(df_storico, use_container_width=True)
+        
+        # Bottone Export Excel
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            df_storico.to_excel(writer, index=False, sheet_name='Movimenti')
+            
+        st.download_button(
+            label="📥 Scarica Excel Movimenti",
+            data=buffer.getvalue(),
+            file_name=f"movimenti_magazzino_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        
+        if st.button("🗑️ Cancella tutto lo storico"):
+            st.session_state['movimenti'] = []
+            st.rerun()
+            
+    else:
+        st.info("Nessun movimento registrato in questa sessione.")
+
+    # 3. VISUALIZZAZIONE DATI MASTER (Opzionale, per controllo)
+    with st.expander("🔍 Vedi Lista Completa Prodotti (Database)"):
+        st.dataframe(df_prodotti[['Reparto', 'Categoria', 'Codice', 'Descrizione', 'Confezione']])
+
 else:
-    # --- 1. FILTRI LATERALI ---
-    with st.expander("🔎 Filtra Prodotti", expanded=True):
-        col_f1, col_f2 = st.columns(2)
-        lob_list = df['LOB'].dropna().unique().tolist()
-        tipo_list = df['Tipo'].dropna().unique().tolist()
-        
-        with col_f1:
-            sel_lob = st.multiselect("Reparto", options=lob_list, default=lob_list[:1]) # Default seleziona il primo
-        with col_f2:
-            sel_tipo = st.multiselect("Tipo", options=tipo_list, default=['RGT'])
-
-    # Logica Filtro
-    mask = (df['LOB'].isin(sel_lob)) & (df['Tipo'].isin(sel_tipo))
-    df_filtered = df[mask].copy()
-
-    # Aggiungi colonna Giacenza per l'input (inizia a 0)
-    if 'Giacenza' not in df_filtered.columns:
-        df_filtered['Giacenza'] = 0
-
-    st.write(f"Trovati **{len(df_filtered)}** prodotti.")
-
-    # --- 2. TABELLA DI INSERIMENTO ---
-    # Questa è la parte magica modificabile
-    edited_df = st.data_editor(
-        df_filtered[['Prodotto', 'Test_per_Kit', 'Fabbisogno_Mensile', 'Giacenza']],
-        column_config={
-            "Prodotto": st.column_config.TextColumn("Nome", disabled=True),
-            "Test_per_Kit": st.column_config.NumberColumn("Test/Kit", disabled=True, format="%d"),
-            "Fabbisogno_Mensile": st.column_config.NumberColumn("Consumo Mese", disabled=True),
-            "Giacenza": st.column_config.NumberColumn(
-                "📦 TUE SCATOLE", 
-                help="Quante ne hai in frigo?",
-                min_value=0, 
-                step=1,
-                format="%d"
-            )
-        },
-        use_container_width=True,
-        hide_index=True,
-        height=450
-    )
-
-    # --- 3. BOTTONE CALCOLO ---
-    if st.button("CALCOLA ORDINE 🚀", type="primary", use_container_width=True):
-        ordini = []
-        
-        for index, row in edited_df.iterrows():
-            giacenza = row['Giacenza']
-            test_per_kit = row['Test_per_Kit']
-            fabbisogno = row['Fabbisogno_Mensile']
-            nome = row['Prodotto']
-            
-            da_ordinare_pz = 0
-            motivo = ""
-
-            # Calcolo test disponibili
-            copertura_test = giacenza * test_per_kit
-
-            # LOGICA DI ORDINE
-            # Caso 1: Reagenti con fabbisogno definito
-            if fabbisogno > 5: # Soglia minima per considerare il fabbisogno "reale"
-                if copertura_test < fabbisogno:
-                    mancanti = fabbisogno - copertura_test
-                    if test_per_kit > 0:
-                        da_ordinare_pz = math.ceil(mancanti / test_per_kit)
-                    else:
-                        da_ordinare_pz = 1
-                    motivo = "Sotto scorta"
-            
-            # Caso 2: Calibratori o prodotti a basso consumo (Fabbisogno basso o 0)
-            # Se ne ho 0, ne ordino 1 per sicurezza
-            elif giacenza == 0:
-                da_ordinare_pz = 1
-                motivo = "Scorta minima (0 in casa)"
-
-            if da_ordinare_pz > 0:
-                ordini.append({
-                    "Prodotto": nome,
-                    "Da Ordinare": da_ordinare_pz,
-                    "Motivo": motivo
-                })
-
-        st.divider()
-        
-        if ordini:
-            st.success(f"Devi ordinare {len(ordini)} articoli!")
-            df_res = pd.DataFrame(ordini)
-            st.dataframe(df_res, use_container_width=True)
-        else:
-            st.balloons()
-            st.info("✅ Tutto a posto! Non serve ordinare nulla con queste quantità.")
+    st.warning("Il file dati.xlsx sembra vuoto o non leggibile. Controlla di averlo caricato su GitHub.")

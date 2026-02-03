@@ -1,235 +1,236 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import math
 import io
 
-# --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="Abbott Manager ERP", layout="wide", initial_sidebar_state="collapsed")
+# --- CONFIGURAZIONE ---
+st.set_page_config(page_title="Gestione Magazzino (2 Mesi)", layout="wide", initial_sidebar_state="collapsed")
 
-# --- FUNZIONI DI CARICAMENTO E LOGICA ---
+# COSTANTI DI GESTIONE
+INTERVALLO_CONTROLLO_MESI = 2    # Ogni quanto controlli il magazzino
+LEAD_TIME_MESI = 0.5             # 2 settimane di sicurezza per la consegna
+TARGET_MESI = INTERVALLO_CONTROLLO_MESI + LEAD_TIME_MESI # Obiettivo: Coprire 2.5 mesi
+
+# --- CARICAMENTO DATI ---
 @st.cache_data
 def load_master_data():
     try:
-        # Carica il file Excel
         df = pd.read_excel('dati.xlsx', engine='openpyxl')
         
-        # 1. Logica Intelligente per i Codici (Merge di due colonne)
+        # Gestione Codici
         if 'LN ABBOTT' in df.columns and 'LN ABBOTT AGGIORNATI' in df.columns:
             df['Codice_Finale'] = df['LN ABBOTT'].fillna(df['LN ABBOTT AGGIORNATI'])
         else:
-            # Fallback se le colonne hanno nomi diversi, prova la 5a colonna
             df['Codice_Finale'] = df.iloc[:, 4] 
 
-        # 2. Mappatura Colonne basata sul tuo file
+        # Mappatura
         col_map = {
             'Codice_Finale': 'Codice',
             'Descrizione commerciale': 'Descrizione',
             'Rgt/Cal/QC/Cons': 'Categoria',
-            '# Kit/Mese': 'Fabbisogno_Mensile',
+            '# Kit/Mese': 'Fabbisogno_Kit_Mese', 
+            'Test TOT MEDI/MESE Aggiustati': 'Consumo_Test_Mese',
+            'KIT': 'Test_per_Scatola',
             'Conf.to': 'Confezione',
             'LOB': 'Reparto'
         }
+        df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
         
-        df = df.rename(columns=col_map)
+        # Pulizia
+        df = df[df['Descrizione'].notna()]
+        df['Codice'] = df['Codice'].astype(str).str.replace('.0', '', regex=False)
         
-        # 3. Pulizia
-        df = df[df['Descrizione'].notna()] # Via le righe vuote
-        df['Codice'] = df['Codice'].astype(str).str.replace('.0', '', regex=False) # Pulisce codici numerici
-        
-        # Converte fabbisogno in numeri e gestisce errori
-        df['Fabbisogno_Mensile'] = pd.to_numeric(df['Fabbisogno_Mensile'], errors='coerce').fillna(0)
-        
-        # Chiave di ricerca
+        # Conversione Numerica
+        cols_to_numeric = ['Fabbisogno_Kit_Mese', 'Consumo_Test_Mese', 'Test_per_Scatola']
+        for col in cols_to_numeric:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            else:
+                df[col] = 0
+
         df['Prodotto_Label'] = df['Descrizione'] + " [" + df['Codice'] + "]"
-        
-        return df[['Codice', 'Descrizione', 'Categoria', 'Fabbisogno_Mensile', 'Confezione', 'Reparto', 'Prodotto_Label']]
+        return df
     except Exception as e:
-        st.error(f"Errore critico nel file Excel: {e}")
+        st.error(f"Errore file Excel: {e}")
         return pd.DataFrame()
 
-# --- GESTIONE MEMORIA (SESSION STATE) ---
+# --- SESSION STATE ---
 if 'magazzino' not in st.session_state:
     st.session_state['magazzino'] = {} 
-
 if 'storico' not in st.session_state:
     st.session_state['storico'] = []
 
-# --- INTERFACCIA UTENTE ---
-st.title("🏥 Gestione Magazzino & Ordini")
+# --- APP ---
+st.title("🏥 Magazzino - Gestione Bimestrale")
 
 df_master = load_master_data()
 
 if not df_master.empty:
     
-    # Suddivisione in 3 Tab Operativi
-    tab_mov, tab_ordini, tab_scadenze = st.tabs(["⚡ Movimenti Veloci", "📊 Ordini & Scorte", "⚠️ Scadenze"])
+    tab_mov, tab_ordini, tab_scadenze = st.tabs(["⚡ Movimenti", "📦 Calcolo Ordine (2 Mesi)", "⚠️ Scadenze"])
 
     # === TAB 1: MOVIMENTI ===
     with tab_mov:
-        st.markdown("### Registra Entrata/Uscita")
-        
-        lista_prodotti = df_master['Prodotto_Label'].tolist()
-        prodotto_scelto = st.selectbox("Cerca Prodotto:", lista_prodotti)
+        col_sel, col_info = st.columns([3, 1])
+        with col_sel:
+            lista_prodotti = df_master['Prodotto_Label'].tolist()
+            prodotto_scelto = st.selectbox("Seleziona Prodotto:", lista_prodotti)
         
         row_art = df_master[df_master['Prodotto_Label'] == prodotto_scelto].iloc[0]
         codice_art = row_art['Codice']
+
+        with col_info:
+            st.info(f"Fabbisogno Mese: {row_art.get('Fabbisogno_Kit_Mese', 0)} scatole")
         
         col_qty, col_tipo = st.columns([1, 2])
         with col_qty:
-            qty = st.number_input("Quantità (Scatole)", min_value=1, value=1, step=1)
+            qty = st.number_input("Quantità", min_value=1, value=1)
         with col_tipo:
-            tipo_mov = st.radio("Tipo Movimento", ["Prelievo (Scarico) ➖", "Carico (Merce Arrivata) ➕"], horizontal=True)
+            tipo_mov = st.radio("Azione", ["Prelievo ➖", "Carico ➕"], horizontal=True)
 
-        # SEZIONE SCADENZA (Solo se carico)
-        scadenza_str = "-"
-        dt_scadenza_yyyymm = None
-        
+        # Scadenza
+        scadenza_str, dt_scadenza_yyyymm = "-", None
         if "Carico" in tipo_mov:
-            st.info("📅 Inserisci Scadenza (Mese/Anno)")
-            c_mese, c_anno = st.columns(2)
-            with c_mese:
-                mese = st.selectbox("Mese", range(1, 13))
-            with c_anno:
-                anno_corrente = datetime.now().year
-                anno = st.selectbox("Anno", range(anno_corrente, anno_corrente + 6))
-            
+            c_m, c_a = st.columns(2)
+            with c_m: mese = st.selectbox("Mese Scad.", range(1, 13))
+            with c_a: anno = st.selectbox("Anno Scad.", range(datetime.now().year, datetime.now().year + 6))
             scadenza_str = f"{mese:02d}/{anno}"
-            dt_scadenza_yyyymm = f"{anno}-{mese:02d}" # Formato ordinabile YYYY-MM
+            dt_scadenza_yyyymm = f"{anno}-{mese:02d}"
 
-        if st.button("CONFERMA MOVIMENTO", type="primary", use_container_width=True):
+        if st.button("Registra Movimento", type="primary", use_container_width=True):
             if codice_art not in st.session_state['magazzino']:
                 st.session_state['magazzino'][codice_art] = {'qty': 0, 'scadenze': []}
             
-            dati_mag = st.session_state['magazzino'][codice_art]
+            dati = st.session_state['magazzino'][codice_art]
             
             if "Carico" in tipo_mov:
-                dati_mag['qty'] += qty
-                # Aggiunge batch scadenza
-                dati_mag['scadenze'].append({'data': dt_scadenza_yyyymm, 'qty_batch': qty, 'display': scadenza_str})
-                # Ordina per data
-                dati_mag['scadenze'].sort(key=lambda x: x['data'])
-                
-            else: # Prelievo
-                if dati_mag['qty'] < qty:
-                    st.error(f"Giacenza insufficiente! Hai solo {dati_mag['qty']} scatole.")
+                dati['qty'] += qty
+                dati['scadenze'].append({'data': dt_scadenza_yyyymm, 'qty_batch': qty, 'display': scadenza_str})
+                dati['scadenze'].sort(key=lambda x: x['data'])
+            else:
+                if dati['qty'] < qty:
+                    st.error("Giacenza insufficiente!")
                     st.stop()
-                else:
-                    dati_mag['qty'] -= qty
-                    # Logica FIFO
-                    qty_to_remove = qty
-                    new_scadenze = []
-                    for batch in dati_mag['scadenze']:
-                        if qty_to_remove > 0:
-                            if batch['qty_batch'] > qty_to_remove:
-                                batch['qty_batch'] -= qty_to_remove
-                                qty_to_remove = 0
-                                new_scadenze.append(batch)
-                            else:
-                                qty_to_remove -= batch['qty_batch']
+                dati['qty'] -= qty
+                # FIFO
+                rem = qty
+                new_scad = []
+                for batch in dati['scadenze']:
+                    if rem > 0:
+                        if batch['qty_batch'] > rem:
+                            batch['qty_batch'] -= rem
+                            rem = 0
+                            new_scad.append(batch)
                         else:
-                            new_scadenze.append(batch)
-                    dati_mag['scadenze'] = new_scadenze
+                            rem -= batch['qty_batch']
+                    else:
+                        new_scad.append(batch)
+                dati['scadenze'] = new_scad
 
             st.session_state['storico'].insert(0, {
                 "Data": datetime.now().strftime("%d/%m %H:%M"),
                 "Prodotto": row_art['Descrizione'],
-                "Azione": "➕ Carico" if "Carico" in tipo_mov else "➖ Prelievo",
+                "Azione": "➕" if "Carico" in tipo_mov else "➖",
                 "Qta": qty,
-                "Giacenza Attuale": dati_mag['qty'],
-                "Scadenza": scadenza_str
+                "Giacenza": dati['qty']
             })
-            st.success(f"Registrato! Giacenza attuale: {dati_mag['qty']}")
+            st.success("Fatto!")
 
-    # === TAB 2: ORDINI INTELLIGENTI ===
+    # === TAB 2: ORDINE BIMESTRALE ===
     with tab_ordini:
-        st.write("### 🛒 Calcolo Fabbisogno Mensile")
+        st.markdown(f"""
+        ### 📊 Calcolo Riordino per {INTERVALLO_CONTROLLO_MESI} Mesi
+        Il sistema calcola quanto ordinare per coprire **{INTERVALLO_CONTROLLO_MESI} mesi** di lavoro + **2 settimane** di sicurezza.
+        """)
         
         df_calc = df_master.copy()
+        df_calc['Giacenza'] = df_calc['Codice'].apply(lambda x: st.session_state['magazzino'].get(x, {}).get('qty', 0))
         
-        def get_stock(cod):
-            return st.session_state['magazzino'].get(cod, {}).get('qty', 0)
+        # 1. Calcolo Consumo Mensile Reale (Kit)
+        def get_monthly_consumption(row):
+            # Priorità al calcolo sui Test se disponibili
+            if row['Consumo_Test_Mese'] > 0 and row['Test_per_Scatola'] > 0:
+                return row['Consumo_Test_Mese'] / row['Test_per_Scatola']
+            return row['Fabbisogno_Kit_Mese']
+
+        df_calc['Consumo_Mensile_Kit'] = df_calc.apply(get_monthly_consumption, axis=1)
+        
+        # 2. Calcolo Target (Obiettivo Scorta)
+        # Esempio: Consumo 10/mese -> Target 2.5 mesi -> 25 scatole target
+        df_calc['Target_Stock'] = df_calc['Consumo_Mensile_Kit'] * TARGET_MESI
+        df_calc['Target_Stock'] = df_calc['Target_Stock'].apply(math.ceil) # Arrotonda per eccesso
+        
+        # 3. Calcolo Da Ordinare
+        df_calc['Da_Ordinare'] = df_calc.apply(lambda x: max(0, x['Target_Stock'] - x['Giacenza']), axis=1)
+        
+        # 4. Copertura Attuale (in Mesi)
+        def calc_coverage(row):
+            if row['Consumo_Mensile_Kit'] <= 0: return 99
+            return round(row['Giacenza'] / row['Consumo_Mensile_Kit'], 1)
             
-        df_calc['Giacenza'] = df_calc['Codice'].apply(get_stock)
-        df_calc['Fabbisogno_Rounded'] = df_calc['Fabbisogno_Mensile'].apply(math.ceil)
+        df_calc['Copertura_Mesi'] = df_calc.apply(calc_coverage, axis=1)
         
-        df_calc['DA_ORDINARE'] = df_calc.apply(
-            lambda x: max(0, x['Fabbisogno_Rounded'] - x['Giacenza']), axis=1
+        # 5. Stato
+        def get_status(row):
+            if row['Consumo_Mensile_Kit'] == 0: return "⚪ Info"
+            if row['Giacenza'] == 0: return "🔴 VUOTO"
+            if row['Copertura_Mesi'] < LEAD_TIME_MESI: return "🟠 CRITICO"
+            if row['Copertura_Mesi'] < INTERVALLO_CONTROLLO_MESI: return "🟡 DA REINTEGRARE"
+            return "🟢 COPERTO"
+
+        df_calc['Stato'] = df_calc.apply(get_status, axis=1)
+        
+        # Visualizzazione
+        df_view = df_calc.sort_values(by='Copertura_Mesi')
+        
+        if st.checkbox("Nascondi prodotti già coperti (Verdi)", value=True):
+            df_view = df_view[df_view['Stato'] != "🟢 COPERTO"]
+
+        st.dataframe(
+            df_view[['Stato', 'Descrizione', 'Giacenza', 'Consumo_Mensile_Kit', 'Target_Stock', 'Da_Ordinare']],
+            use_container_width=True,
+            column_config={
+                "Consumo_Mensile_Kit": st.column_config.NumberColumn("Consumo/Mese", format="%.1f"),
+                "Target_Stock": st.column_config.NumberColumn("Scorta Obiettivo", help=f"Quanto serve per {TARGET_MESI} mesi"),
+                "Da_Ordinare": st.column_config.NumberColumn("🛒 DA ORDINARE", help="Differenza tra Obiettivo e Giacenza")
+            }
         )
         
-        def calcola_giorni(row):
-            if row['Fabbisogno_Mensile'] <= 0: return 999
-            consumo_giornaliero = row['Fabbisogno_Mensile'] / 30
-            giorni = row['Giacenza'] / consumo_giornaliero
-            return int(giorni)
+        # Export
+        if st.button("📥 Scarica Ordine Excel"):
+            df_out = df_calc[df_calc['Da_Ordinare'] > 0][['Codice', 'Descrizione', 'Da_Ordinare', 'Confezione']]
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df_out.to_excel(writer, index=False)
+            st.download_button("Download File", data=buffer.getvalue(), file_name="ordine_bimestrale.xlsx")
 
-        df_calc['Autonomia_Giorni'] = df_calc.apply(calcola_giorni, axis=1)
-
-        def get_semaforo(row):
-            if row['Fabbisogno_Mensile'] == 0: return "⚪ Info"
-            if row['Giacenza'] == 0: return "🔴 ESAURITO"
-            if row['Autonomia_Giorni'] < 7: return "🟠 URGENTE (<7gg)"
-            if row['Autonomia_Giorni'] < 20: return "🟡 ORDINE PREVISTO"
-            return "🟢 OK"
-
-        df_calc['Stato'] = df_calc.apply(get_semaforo, axis=1)
-        
-        df_view = df_calc.sort_values(by=['Autonomia_Giorni'])[['Stato', 'Descrizione', 'Giacenza', 'Fabbisogno_Rounded', 'DA_ORDINARE', 'Autonomia_Giorni']]
-        
-        filter_ok = st.checkbox("Nascondi prodotti OK (Verdi)", value=True)
-        if filter_ok:
-            df_view = df_view[df_view['Stato'] != "🟢 OK"]
-
-        st.dataframe(df_view, use_container_width=True)
-        
-        ordine_export = df_calc[df_calc['DA_ORDINARE'] > 0][['Codice', 'Descrizione', 'DA_ORDINARE', 'Confezione']]
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            ordine_export.to_excel(writer, index=False)
-            
-        st.download_button("📥 Scarica Lista Ordine (Excel)", data=buffer.getvalue(), file_name="ordine_magazzino.xlsx")
-
-    # === TAB 3: ANALISI SCADENZE ===
+    # === TAB 3: SCADENZE ===
     with tab_scadenze:
-        st.write("### 🗓️ Controllo Scadenze")
-        
-        allarmi_scadenza = []
-        oggi_str = datetime.now().strftime("%Y-%m")
-        # Calcolo data limite (3 mesi da oggi)
-        today_plus_3_months = (datetime.now() + pd.DateOffset(months=3)).strftime("%Y-%m")
+        st.write("### 📅 Monitoraggio Scadenze")
+        scad_list = []
+        today_str = datetime.now().strftime("%Y-%m")
+        limit_str = (datetime.now() + pd.DateOffset(months=INTERVALLO_CONTROLLO_MESI)).strftime("%Y-%m")
         
         for cod, data in st.session_state['magazzino'].items():
-            if data['qty'] > 0:
-                for batch in data['scadenze']:
-                    # Se la data del lotto è minore o uguale a fra 3 mesi
-                    if batch['data'] <= today_plus_3_months:
-                        stato_scad = "🟢"
-                        if batch['data'] < oggi_str: stato_scad = "☠️ SCADUTO"
-                        elif batch['data'] == oggi_str: stato_scad = "🔴 SCADE ORA"
-                        else: stato_scad = "🟡 SCADE PRESTO"
-                        
-                        nome_prod = df_master[df_master['Codice'] == cod]['Descrizione'].iloc[0]
-                        allarmi_scadenza.append({
-                            "Stato": stato_scad,
-                            "Prodotto": nome_prod,
-                            "Scatole": batch['qty_batch'],
-                            "Scadenza": batch['display']
-                        })
+            for batch in data['scadenze']:
+                # Mostra solo se scade entro il prossimo ciclo di controllo
+                status = "🟢"
+                if batch['data'] < today_str: status = "☠️ SCADUTO"
+                elif batch['data'] <= limit_str: status = "⚠️ SCADE PRESTO"
+                
+                scad_list.append({
+                    "Stato": status,
+                    "Prodotto": df_master[df_master['Codice']==cod]['Descrizione'].iloc[0],
+                    "Scatole": batch['qty_batch'],
+                    "Scadenza": batch['display'],
+                    "Sort": batch['data']
+                })
         
-        if allarmi_scadenza:
-            df_scad = pd.DataFrame(allarmi_scadenza)
-            df_scad = df_scad.sort_values(by='Scadenza')
-            st.dataframe(df_scad, use_container_width=True)
+        if scad_list:
+            st.dataframe(pd.DataFrame(scad_list).sort_values(by='Sort'), use_container_width=True)
         else:
-            st.info("Nessun prodotto in scadenza nei prossimi 3 mesi.")
+            st.info("Nessuna scadenza critica rilevata.")
 
 else:
-    st.error("Errore: Il file dati.xlsx non è stato caricato correttamente o è vuoto.")
-
-# Sidebar per Reset
-with st.sidebar:
-    st.write("🔧 Opzioni")
-    if st.button("🗑️ Reset Magazzino"):
-        st.session_state['magazzino'] = {}
-        st.session_state['storico'] = []
-        st.rerun()
+    st.error("Errore caricamento dati.")

@@ -46,9 +46,9 @@ def load_master_data():
         
         df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
         
-        # Pulizia rigorosa
-        df = df[df['Descrizione'].notna()] # Via le righe senza nome
-        df = df[df['Codice'].notna()]      # Via le righe senza codice (fondamentale per non perdere pezzi)
+        # Pulizia
+        df = df[df['Descrizione'].notna()] 
+        df = df[df['Codice'].notna()]      
         
         df['Codice'] = df['Codice'].astype(str).str.replace('.0', '', regex=False)
         
@@ -139,7 +139,7 @@ if not df_master.empty:
         categoria = str(row_art.get('Categoria', '')).upper()
         
         with col_info:
-            st.info(f"Conf: {row_art.get('Confezione', '-')}")
+            st.info(f"Conf: {row_art.get('Confezione', '-')}\nTipo: {categoria}")
             if "CAL" in categoria: st.warning(f"CALIBRATORE (Min {MIN_SCORTA_CAL})")
 
         c1, c2 = st.columns([1, 2])
@@ -189,12 +189,12 @@ if not df_master.empty:
             st.success("✅ Salvato online!")
             st.rerun()
 
-    # === TAB ORDINI (CORRETTA) ===
+    # === TAB ORDINI (AGGIORNATA) ===
     with tab_ordini:
         st.markdown(f"### 🚦 Pannello Controllo Scorte")
         
-        # 1. Ricerca nella tabella
-        search_term = st.text_input("🔍 Cerca prodotto nella lista ordini...", "")
+        # Barra di Ricerca
+        search_term = st.text_input("🔍 Cerca prodotto (Nome, Codice o Categoria)...", "")
         
         df_calc = df_master.copy()
         df_calc['Giacenza'] = df_calc['Codice'].apply(lambda x: st.session_state['magazzino'].get(x, {}).get('qty', 0))
@@ -213,7 +213,7 @@ if not df_master.empty:
         df_calc['Scorta_Target'] = df_calc.apply(calcola_target, axis=1)
         df_calc['Da_Ordinare'] = df_calc.apply(lambda x: max(0, x['Scorta_Target'] - x['Giacenza']), axis=1)
         
-        # Funzione Semaforo Corretta
+        # Funzione Semaforo
         def get_semaforo(row):
             categoria = str(row['Categoria']).upper()
             if "CAL" in categoria and row['Giacenza'] < MIN_SCORTA_CAL: return "🔴 SOTTO MINIMO"
@@ -224,28 +224,40 @@ if not df_master.empty:
         df_calc['Stato'] = df_calc.apply(get_semaforo, axis=1)
         
         # FILTRO DI VISUALIZZAZIONE
-        # Di default mostra solo i problemi (Rossi e Gialli)
-        filtro_stati = st.multiselect(
-            "Filtra per stato:", 
-            ["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE", "🟢 OK"],
-            default=["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE"]
-        )
+        col_filtro1, col_filtro2 = st.columns([2, 1])
+        with col_filtro1:
+            filtro_stati = st.multiselect(
+                "Filtra per stato (Lascia vuoto per vedere TUTTO):", 
+                ["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE", "🟢 OK"],
+                default=["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE"] # Default intelligente
+            )
         
-        df_view = df_calc[df_calc['Stato'].isin(filtro_stati)]
+        # 1. Applica Filtro Stati (Se vuoto = Mostra Tutto)
+        if not filtro_stati:
+            df_view = df_calc # Mostra tutto
+        else:
+            df_view = df_calc[df_calc['Stato'].isin(filtro_stati)] # Mostra solo selezionati
 
-        # Filtro ricerca testuale
+        # 2. Applica Ricerca Testuale
         if search_term:
-            df_view = df_view[df_view['Descrizione'].str.contains(search_term, case=False, na=False)]
+            # Cerca su Descrizione o Categoria o Codice
+            mask = (
+                df_view['Descrizione'].str.contains(search_term, case=False, na=False) | 
+                df_view['Categoria'].str.contains(search_term, case=False, na=False) |
+                df_view['Codice'].str.contains(search_term, case=False, na=False)
+            )
+            df_view = df_view[mask]
             
-        # Ordinamento: Prima i Rossi, poi i Gialli
+        # Ordinamento
         df_view = df_view.sort_values(by=['Da_Ordinare'], ascending=False)
         
-        # MOSTRA TABELLA CON BOLLINI
+        # MOSTRA TABELLA (Con Categoria)
         st.dataframe(
-            df_view[['Stato', 'Descrizione', 'Giacenza', 'Scorta_Target', 'Da_Ordinare']], 
+            df_view[['Stato', 'Categoria', 'Descrizione', 'Giacenza', 'Scorta_Target', 'Da_Ordinare']], 
             use_container_width=True,
             column_config={
                 "Stato": st.column_config.TextColumn("Stato", width="small"),
+                "Categoria": st.column_config.TextColumn("Cat.", width="small"),
                 "Da_Ordinare": st.column_config.NumberColumn("🛒 Da Ordinare", format="%d")
             }
         )

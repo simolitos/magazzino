@@ -7,7 +7,7 @@ import io
 import json
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(page_title="Magazzino CLOUD", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Magazzino Pro", layout="wide", initial_sidebar_state="collapsed")
 
 MESI_COPERTURA = 1.0      
 MESI_BUFFER = 0.5         
@@ -45,7 +45,11 @@ def load_master_data():
         }
         
         df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
-        df = df[df['Descrizione'].notna()]
+        
+        # Pulizia rigorosa
+        df = df[df['Descrizione'].notna()] # Via le righe senza nome
+        df = df[df['Codice'].notna()]      # Via le righe senza codice (fondamentale per non perdere pezzi)
+        
         df['Codice'] = df['Codice'].astype(str).str.replace('.0', '', regex=False)
         
         for col in ['Test_Mensili_Reali', 'Test_per_Scatola', 'Fabbisogno_Kit_Mese_Stimato']:
@@ -66,9 +70,7 @@ def fetch_inventory():
     try:
         df_db = conn.read(worksheet="Foglio1", ttl=0)
         magazzino = {}
-        # Controlla se il df ha le colonne giuste
         if not df_db.empty and 'Codice' in df_db.columns:
-            # Assicuriamoci che Codice sia stringa
             df_db['Codice'] = df_db['Codice'].astype(str)
             for _, row in df_db.iterrows():
                 cod = str(row['Codice'])
@@ -94,7 +96,6 @@ def update_inventory(magazzino_dict):
                 "Ultima_Modifica": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             })
     
-    # Se il magazzino è vuoto, creiamo un DF vuoto con le colonne giuste
     if not data_list:
         df_new = pd.DataFrame(columns=["Codice", "Quantita", "Scadenze_JSON", "Ultima_Modifica"])
     else:
@@ -103,7 +104,7 @@ def update_inventory(magazzino_dict):
     conn.update(worksheet="Foglio1", data=df_new)
 
 # --- APP ---
-st.title("☁️ Magazzino Cloud (Google Sync)")
+st.title("☁️ Magazzino Cloud")
 
 df_master = load_master_data()
 
@@ -114,7 +115,7 @@ if 'magazzino' not in st.session_state:
 
 if not df_master.empty:
 
-    tab_mov, tab_ordini, tab_scadenze = st.tabs(["⚡ Movimenti", "📦 Ordini", "⚠️ Scadenze"])
+    tab_mov, tab_ordini, tab_scadenze = st.tabs(["⚡ Movimenti", "🚦 Situazione Ordini", "⚠️ Scadenze"])
 
     # === TAB MOVIMENTI ===
     with tab_mov:
@@ -154,7 +155,6 @@ if not df_master.empty:
             scad_sort = f"{anno}-{mese:02d}"
 
         if st.button("💾 REGISTRA E SALVA ONLINE", type="primary"):
-            # Aggiorna memoria locale
             if codice not in st.session_state['magazzino']:
                 st.session_state['magazzino'][codice] = {'qty': 0, 'scadenze': []}
             
@@ -183,16 +183,19 @@ if not df_master.empty:
                         new_scad.append(batch)
                 ref['scadenze'] = new_scad
             
-            # SALVATAGGIO CLOUD
             with st.spinner("Salvataggio su Google Sheets in corso..."):
                 update_inventory(st.session_state['magazzino'])
             
             st.success("✅ Salvato online!")
             st.rerun()
 
-    # === TAB ORDINI ===
+    # === TAB ORDINI (CORRETTA) ===
     with tab_ordini:
-        st.markdown(f"### 📊 Calcolo Fabbisogno (Target 1.5 Mesi)")
+        st.markdown(f"### 🚦 Pannello Controllo Scorte")
+        
+        # 1. Ricerca nella tabella
+        search_term = st.text_input("🔍 Cerca prodotto nella lista ordini...", "")
+        
         df_calc = df_master.copy()
         df_calc['Giacenza'] = df_calc['Codice'].apply(lambda x: st.session_state['magazzino'].get(x, {}).get('qty', 0))
         
@@ -210,14 +213,48 @@ if not df_master.empty:
         df_calc['Scorta_Target'] = df_calc.apply(calcola_target, axis=1)
         df_calc['Da_Ordinare'] = df_calc.apply(lambda x: max(0, x['Scorta_Target'] - x['Giacenza']), axis=1)
         
-        df_view = df_calc[df_calc['Da_Ordinare'] > 0].sort_values(by='Da_Ordinare', ascending=False)
-        st.dataframe(df_view[['Descrizione', 'Giacenza', 'Scorta_Target', 'Da_Ordinare']], use_container_width=True)
+        # Funzione Semaforo Corretta
+        def get_semaforo(row):
+            categoria = str(row['Categoria']).upper()
+            if "CAL" in categoria and row['Giacenza'] < MIN_SCORTA_CAL: return "🔴 SOTTO MINIMO"
+            if row['Giacenza'] == 0: return "🔴 ESAURITO"
+            if row['Da_Ordinare'] > 0: return "🟡 DA ORDINARE"
+            return "🟢 OK"
+
+        df_calc['Stato'] = df_calc.apply(get_semaforo, axis=1)
         
-        if st.button("📥 Scarica Ordine"):
+        # FILTRO DI VISUALIZZAZIONE
+        # Di default mostra solo i problemi (Rossi e Gialli)
+        filtro_stati = st.multiselect(
+            "Filtra per stato:", 
+            ["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE", "🟢 OK"],
+            default=["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE"]
+        )
+        
+        df_view = df_calc[df_calc['Stato'].isin(filtro_stati)]
+
+        # Filtro ricerca testuale
+        if search_term:
+            df_view = df_view[df_view['Descrizione'].str.contains(search_term, case=False, na=False)]
+            
+        # Ordinamento: Prima i Rossi, poi i Gialli
+        df_view = df_view.sort_values(by=['Da_Ordinare'], ascending=False)
+        
+        # MOSTRA TABELLA CON BOLLINI
+        st.dataframe(
+            df_view[['Stato', 'Descrizione', 'Giacenza', 'Scorta_Target', 'Da_Ordinare']], 
+            use_container_width=True,
+            column_config={
+                "Stato": st.column_config.TextColumn("Stato", width="small"),
+                "Da_Ordinare": st.column_config.NumberColumn("🛒 Da Ordinare", format="%d")
+            }
+        )
+        
+        if st.button("📥 Scarica Lista Ordine"):
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 df_view.to_excel(writer, index=False)
-            st.download_button("Download", data=buffer.getvalue(), file_name="ordine_cloud.xlsx")
+            st.download_button("Download Excel", data=buffer.getvalue(), file_name="ordine_cloud.xlsx")
 
     # === TAB SCADENZE ===
     with tab_scadenze:

@@ -1,11 +1,11 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import math
 import io
 import json
-from fpdf import FPDF # Libreria per creare il PDF
+from fpdf import FPDF
 
 # --- CONFIGURAZIONE ---
 st.set_page_config(page_title="Gestione Magazzino", layout="wide", initial_sidebar_state="expanded")
@@ -59,7 +59,7 @@ def load_master_data():
         st.error(f"Errore Excel: {e}")
         return pd.DataFrame()
 
-# --- FUNZIONI CLOUD ---
+# --- FUNZIONI CLOUD (INVENTARIO) ---
 def fetch_inventory():
     try:
         df_db = conn.read(worksheet="Foglio1", ttl=0)
@@ -93,13 +93,64 @@ def update_inventory(magazzino_dict):
         
     conn.update(worksheet="Foglio1", data=df_new)
 
-# --- FUNZIONE GENERAZIONE PDF ---
+# --- FUNZIONI CLOUD (LOG 7 GIORNI) ---
+def manage_log_cloud(azione, prodotto_nome, qta):
+    """Aggiunge un evento al log e pulisce i vecchi > 7 giorni"""
+    try:
+        # 1. Legge il log attuale dal foglio "Logs"
+        try:
+            df_log = conn.read(worksheet="Logs", ttl=0)
+        except:
+            df_log = pd.DataFrame(columns=["Timestamp", "Data_Leggibile", "Azione", "Prodotto"])
+
+        # 2. Crea la nuova riga
+        now = datetime.now()
+        new_row = {
+            "Timestamp": now, # Formato datetime per i calcoli
+            "Data_Leggibile": now.strftime("%d/%m %H:%M"),
+            "Azione": f"{azione} ({qta})",
+            "Prodotto": prodotto_nome
+        }
+        
+        # 3. Aggiunge al dataframe esistente
+        df_log = pd.concat([pd.DataFrame([new_row]), df_log], ignore_index=True)
+        
+        # 4. PULIZIA: Rimuove righe più vecchie di 7 giorni
+        sette_giorni_fa = now - timedelta(days=7)
+        
+        # Assicuriamoci che Timestamp sia datetime
+        df_log['Timestamp'] = pd.to_datetime(df_log['Timestamp'])
+        
+        # Filtra (Mantiene solo i recenti)
+        df_log_clean = df_log[df_log['Timestamp'] > sette_giorni_fa]
+        
+        # 5. Salva su Google Sheets
+        conn.update(worksheet="Logs", data=df_log_clean)
+        
+        return df_log_clean
+        
+    except Exception as e:
+        st.error(f"Errore nel salvare il Log: {e}")
+        return pd.DataFrame()
+
+def fetch_only_log():
+    """Scarica solo il log per visualizzarlo"""
+    try:
+        df_log = conn.read(worksheet="Logs", ttl=0)
+        if not df_log.empty:
+            # Ordina dal più recente
+            df_log['Timestamp'] = pd.to_datetime(df_log['Timestamp'])
+            df_log = df_log.sort_values(by='Timestamp', ascending=False)
+        return df_log
+    except:
+        return pd.DataFrame()
+
+# --- FUNZIONE PDF ---
 class PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 15)
         self.cell(0, 10, f'Inventario Magazzino - {datetime.now().strftime("%d/%m/%Y")}', 0, 1, 'C')
         self.ln(5)
-
     def footer(self):
         self.set_y(-15)
         self.set_font('Arial', 'I', 8)
@@ -109,88 +160,65 @@ def create_pdf_report(df_data):
     pdf = PDF()
     pdf.add_page()
     pdf.set_font('Arial', '', 10)
-    
-    # Raggruppa per Categoria (TIPO)
     categorie = sorted(df_data['Categoria'].unique().astype(str))
-    
     for cat in categorie:
-        # Intestazione Categoria
-        pdf.set_fill_color(200, 220, 255) # Azzurrino
+        pdf.set_fill_color(200, 220, 255)
         pdf.set_font('Arial', 'B', 12)
-        # Fix caratteri speciali latin-1
         cat_clean = cat.encode('latin-1', 'replace').decode('latin-1')
         pdf.cell(0, 10, f"CATEGORIA: {cat_clean}", 1, 1, 'L', fill=True)
-        
-        # Filtra prodotti di questa categoria
         subset = df_data[df_data['Categoria'] == cat].sort_values(by='Descrizione')
-        
-        # Intestazione Tabella
         pdf.set_font('Arial', 'B', 9)
         pdf.cell(30, 8, "Codice", 1)
         pdf.cell(130, 8, "Prodotto", 1)
         pdf.cell(30, 8, "Giacenza", 1)
         pdf.ln()
-        
-        # Righe Prodotti
         pdf.set_font('Arial', '', 9)
         for _, row in subset.iterrows():
             nome = str(row['Descrizione'])[:75].encode('latin-1', 'replace').decode('latin-1')
             cod = str(row['Codice']).encode('latin-1', 'replace').decode('latin-1')
             qta = str(int(row['Giacenza']))
-            
             pdf.cell(30, 7, cod, 1)
             pdf.cell(130, 7, nome, 1)
             pdf.cell(30, 7, qta, 1)
             pdf.ln()
-        
-        pdf.ln(5) # Spazio tra categorie
-
+        pdf.ln(5)
     return pdf.output(dest='S').encode('latin-1')
-
-# --- SIDEBAR: LOG E STAMPA ---
-if 'session_log' not in st.session_state:
-    st.session_state['session_log'] = []
-
-with st.sidebar:
-    st.header("🖨️ AREA STAMPA")
-    st.caption("Scarica la lista completa divisa per categorie.")
-    
-    if st.button("📄 Genera PDF Giacenza"):
-        # Prepara i dati
-        df_m = load_master_data()
-        df_print = df_m.copy()
-        df_print['Giacenza'] = df_print['Codice'].apply(lambda x: st.session_state['magazzino'].get(x, {}).get('qty', 0))
-        # Filtra solo quelli che hanno giacenza > 0 (o vuoi tutto? Mettiamo >0 per pulizia)
-        df_print = df_print[df_print['Giacenza'] > 0]
-        
-        if not df_print.empty:
-            pdf_bytes = create_pdf_report(df_print)
-            st.download_button(
-                label="📥 Clicca per Scaricare PDF",
-                data=pdf_bytes,
-                file_name=f"inventario_{datetime.now().strftime('%Y%m%d')}.pdf",
-                mime="application/pdf"
-            )
-        else:
-            st.warning("Magazzino vuoto!")
-
-    st.divider()
-    
-    st.header("📋 Diario di Bordo")
-    if st.session_state['session_log']:
-        log_df = pd.DataFrame(st.session_state['session_log'])
-        st.dataframe(log_df[['Ora', 'Azione', 'Prodotto']], hide_index=True)
-    else:
-        st.caption("Nessun movimento recente.")
-    
-    st.divider()
-    if st.button("🔄 Ricarica Dati Cloud"):
-        st.cache_data.clear()
-        st.session_state['magazzino'] = fetch_inventory()
-        st.rerun()
 
 # --- APP PRINCIPALE ---
 st.title("🏥 Gestione Lab Abbott")
+
+# SIDEBAR: LOG 7 GIORNI
+with st.sidebar:
+    st.header("🖨️ STAMPA")
+    if st.button("📄 Genera PDF Giacenza"):
+        df_m = load_master_data()
+        if 'magazzino' in st.session_state:
+            df_print = df_m.copy()
+            df_print['Giacenza'] = df_print['Codice'].apply(lambda x: st.session_state['magazzino'].get(x, {}).get('qty', 0))
+            df_print = df_print[df_print['Giacenza'] > 0]
+            if not df_print.empty:
+                pdf_bytes = create_pdf_report(df_print)
+                st.download_button("📥 Scarica PDF", data=pdf_bytes, file_name=f"inventario_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf")
+            else: st.warning("Vuoto")
+
+    st.divider()
+    
+    st.header("📋 LOG (Ultimi 7gg)")
+    
+    # Carica log da Cloud (o usa quello appena aggiornato)
+    if 'cloud_log' not in st.session_state:
+        st.session_state['cloud_log'] = fetch_only_log()
+    
+    if st.button("🔄 Aggiorna Log"):
+        st.session_state['cloud_log'] = fetch_only_log()
+        st.rerun()
+
+    if not st.session_state['cloud_log'].empty:
+        # Mostra tabella pulita
+        show_log = st.session_state['cloud_log'][['Data_Leggibile', 'Azione', 'Prodotto']].head(50)
+        st.dataframe(show_log, hide_index=True, use_container_width=True)
+    else:
+        st.caption("Nessun evento recente.")
 
 df_master = load_master_data()
 
@@ -244,13 +272,13 @@ if not df_master.empty:
                 st.session_state['magazzino'][codice] = {'qty': 0, 'scadenze': []}
             
             ref = st.session_state['magazzino'][codice]
-            log_azione = ""
+            tipo_azione_log = ""
             
             if "CARICO" in azione:
                 ref['qty'] += qty_input
                 ref['scadenze'].append({'display': scad_display, 'sort': scad_sort, 'qty': qty_input})
                 ref['scadenze'].sort(key=lambda x: x['sort'])
-                log_azione = "➕ Carico"
+                tipo_azione_log = "Carico"
 
             elif "PRELIEVO" in azione:
                 if ref['qty'] < qty_input:
@@ -270,7 +298,7 @@ if not df_master.empty:
                     else:
                         new_scad.append(batch)
                 ref['scadenze'] = new_scad
-                log_azione = "➖ Scarico"
+                tipo_azione_log = "Prelievo"
 
             elif "RETTIFICA" in azione:
                 diff = qty_input - ref['qty']
@@ -291,17 +319,23 @@ if not df_master.empty:
                         else:
                             new_scad.append(batch)
                     ref['scadenze'] = new_scad
-                log_azione = "🔧 Rettifica"
+                tipo_azione_log = "Rettifica"
 
-            with st.status("Salvataggio...", expanded=False) as status:
+            # SALVATAGGIO DOPPIO: INVENTARIO + LOG
+            with st.status("Salvataggio Cloud...", expanded=False) as status:
+                st.write("Aggiornamento Inventario...")
                 update_inventory(st.session_state['magazzino'])
+                
+                st.write("Aggiornamento LOG...")
+                # Chiama la nuova funzione che gestisce il Log e i 7 giorni
+                st.session_state['cloud_log'] = manage_log_cloud(
+                    tipo_azione_log, 
+                    row_art['Descrizione'], 
+                    qty_input if "RETTIFICA" not in azione else f"-> {qty_input}"
+                )
+                
                 status.update(label="Salvato!", state="complete")
 
-            st.session_state['session_log'].insert(0, {
-                "Ora": datetime.now().strftime("%H:%M"),
-                "Azione": log_azione,
-                "Prodotto": row_art['Descrizione'][:15]+"..."
-            })
             st.rerun()
 
     # === TAB 2: ORDINI ===
@@ -336,7 +370,6 @@ if not df_master.empty:
 
         df_c[['Stato', 'Target', 'Da_Ordinare']] = df_c.apply(calcola_stato, axis=1)
         
-        # --- LOGICA VISUALIZZAZIONE ---
         df_view = df_c.copy()
         if filtro: df_view = df_view[df_view['Stato'].isin(filtro)]
         if term: 

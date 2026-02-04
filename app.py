@@ -11,10 +11,9 @@ import time
 # --- CONFIGURAZIONE ---
 st.set_page_config(page_title="VIRTUAL Magazzino", layout="wide", initial_sidebar_state="expanded")
 
-# --- STILE CSS (Titoli + LOADING SPINNER) ---
+# --- STILE CSS ---
 st.markdown("""
     <style>
-    /* Titolo Principale */
     .title-text {
         font-size: 38px;
         font-weight: 800;
@@ -32,9 +31,8 @@ st.markdown("""
         padding-top: 2rem;
     }
     
-    /* --- CUSTOM LOADER (Overlay) --- */
-    .stSpinner { display: none; } /* Nascondi spinner default */
-    
+    /* CUSTOM LOADER */
+    .stSpinner { display: none; }
     #custom-loader {
         position: fixed;
         top: 0;
@@ -49,7 +47,6 @@ st.markdown("""
         justify-content: center;
         align-items: center;
     }
-    
     .spinner {
         width: 50px;
         height: 50px;
@@ -59,7 +56,6 @@ st.markdown("""
         animation: spin 1s linear infinite;
         margin-bottom: 15px;
     }
-    
     .loading-text {
         font-family: 'Arial', sans-serif;
         font-size: 18px;
@@ -67,34 +63,25 @@ st.markdown("""
         color: #1E3A8A;
         animation: pulse 1.5s infinite;
     }
-    
-    @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-    }
-    
-    @keyframes pulse {
-        0% { opacity: 0.6; }
-        50% { opacity: 1; }
-        100% { opacity: 0.6; }
-    }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    @keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
     </style>
     """, unsafe_allow_html=True)
 
-# --- PARAMETRI DI CALCOLO ---
+# --- PARAMETRI ---
 MESI_COPERTURA = 1.0      
-MESI_BUFFER = 0.25        # 1 Settimana
+MESI_BUFFER = 0.25        
 TARGET_MESI = MESI_COPERTURA + MESI_BUFFER 
 MIN_SCORTA_CAL = 3        
 
-# --- CONNESSIONE GOOGLE SHEETS ---
+# --- CONNESSIONE ---
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 except:
     st.error("⚠️ Errore Segreti: Configura .streamlit/secrets.toml")
     st.stop()
 
-# --- CARICAMENTO DATI ---
+# --- DATI MASTER ---
 @st.cache_data
 def load_master_data():
     try:
@@ -123,26 +110,22 @@ def load_master_data():
         df['Categoria'] = df['Categoria'].astype(str).fillna('')
         df['Assay_Name'] = df['Assay_Name'].astype(str).fillna('')
         
-        # --- GESTIONE VALORI SPECIALI ---
         def clean_custom_values(val):
             if pd.isna(val): return val
             s = str(val).strip()
-            
-            # REGOLE UTENTE
-            if "25-30" in s: return 30        # GLP SCREWCAPS
-            if "28" in s and "?" in s: return 4   # ACID PROBE WASH (Era 28???, ora forzato a 4)
-            if "12/15" in s: return 15        # PRE-TRIGGER
-            
+            if "25-30" in s: return 30        
+            if "28" in s and "?" in s: return 4   
+            if "12/15" in s: return 15        
             return val
 
         df['Fabbisogno_Kit_Mese_Stimato'] = df['Fabbisogno_Kit_Mese_Stimato'].apply(clean_custom_values)
         df['Kit_Mese_Numeric'] = pd.to_numeric(df['Fabbisogno_Kit_Mese_Stimato'], errors='coerce')
         
         has_valid_consumption = df['Kit_Mese_Numeric'].notna()
-        is_calibrator = df['Categoria'].str.upper().str.contains("CAL")
+        is_cal = df['Categoria'].str.upper().str.contains("CAL")
         is_homocysteine = df['Codice'].str.contains("09P2820", case=False)
         
-        df = df[has_valid_consumption | is_calibrator | is_homocysteine]
+        df = df[has_valid_consumption | is_cal | is_homocysteine]
         
         for col in ['Test_Mensili_Reali', 'Test_per_Scatola']:
             if col in df.columns:
@@ -157,7 +140,7 @@ def load_master_data():
         st.error(f"Errore Excel: {e}")
         return pd.DataFrame()
 
-# --- FUNZIONI CLOUD ---
+# --- CLOUD ---
 def fetch_inventory():
     try:
         df_db = conn.read(worksheet="Foglio1", ttl=0)
@@ -206,9 +189,9 @@ def manage_log_cloud(azione, prodotto_nome, qta):
         
         df_log = pd.concat([pd.DataFrame([new_row]), df_log], ignore_index=True)
         
-        sette_giorni_fa = now - timedelta(days=7)
+        days_ago_7 = now - timedelta(days=7)
         df_log['Timestamp'] = pd.to_datetime(df_log['Timestamp'])
-        df_log_clean = df_log[df_log['Timestamp'] > sette_giorni_fa]
+        df_log_clean = df_log[df_log['Timestamp'] > days_ago_7]
         
         conn.update(worksheet="Logs", data=df_log_clean)
         return df_log_clean
@@ -265,7 +248,7 @@ def create_pdf_report(df_data):
         pdf.ln(5)
     return pdf.output(dest='S').encode('latin-1')
 
-# --- APP HEADER ---
+# --- HEADER ---
 st.markdown("""
     <div>
         <span class='title-text'>🌐 VirtuaL: Magazzino Abbott-LT</span>
@@ -306,7 +289,6 @@ with st.sidebar:
 
 df_master = load_master_data()
 
-# Init Cloud
 if 'magazzino' not in st.session_state:
     with st.spinner("⏳ Sincronizzazione Cloud..."):
         st.session_state['magazzino'] = fetch_inventory()
@@ -327,120 +309,126 @@ if not df_master.empty:
                 return f"{row['Descrizione']}{assay_str} (Disp: {g})"
             
             opzioni = df_master.apply(get_label, axis=1).tolist()
-            scelta = st.selectbox("Cerca Prodotto (Nome, Codice, Assay):", opzioni)
             
-            # Match
+            # --- MODIFICA 1: Selectbox vuota all'inizio ---
+            scelta = st.selectbox(
+                "Cerca Prodotto (Nome, Codice, Assay):", 
+                opzioni,
+                index=None, # Nessun prodotto preselezionato
+                placeholder="Digita per cercare..." # Testo guida
+            )
+            
+        # Mostra i dettagli SOLO se l'utente ha selezionato qualcosa
+        if scelta:
             df_master['Menu_Label'] = df_master.apply(get_label, axis=1)
             row_art = df_master[df_master['Menu_Label'] == scelta].iloc[0]
             codice = str(row_art['Codice'])
             
-        with col_dati:
-            giacenza_attuale = st.session_state['magazzino'].get(codice, {}).get('qty', 0)
-            st.metric("Giacenza Attuale", f"{int(giacenza_attuale)}", delta="scatole")
-            if "CAL" in str(row_art['Categoria']).upper():
-                st.warning("⚠️ Calibratore")
+            with col_dati:
+                giacenza_attuale = st.session_state['magazzino'].get(codice, {}).get('qty', 0)
+                st.metric("Giacenza Attuale", f"{int(giacenza_attuale)}", delta="scatole")
+                if "CAL" in str(row_art['Categoria']).upper():
+                    st.warning("⚠️ Calibratore")
 
-        # PANNELLO DI CONTROLLO
-        with st.container(border=True):
-            st.subheader("🛠️ Pannello Azioni")
-            c1, c2, c3 = st.columns([1, 2, 1])
-            with c1:
-                qty_input = st.number_input("Quantità", min_value=1, value=1, step=1)
-            with c2:
-                azione = st.radio("Seleziona Azione:", ["➖ PRELIEVO", "➕ CARICO", "🔧 RETTIFICA (=)"], horizontal=True)
-            
-            scad_display, scad_sort = "-", None
-            if "CARICO" in azione:
-                with c3:
-                    cm, ca = st.columns(2)
-                    mm = cm.selectbox("Mese", range(1, 13))
-                    yy = ca.selectbox("Anno", range(datetime.now().year, datetime.now().year + 6))
-                    scad_display = f"{mm:02d}/{yy}"
-                    scad_sort = f"{yy}-{mm:02d}"
-
-            # PULSANTE ESEGUI CON LOADER
-            if st.button("🚀 ESEGUI OPERAZIONE", type="primary", use_container_width=True):
-                # 1. LOADER HTML
-                loader_placeholder = st.empty()
-                loader_placeholder.markdown("""
-                    <div id="custom-loader">
-                        <div class="spinner"></div>
-                        <div class="loading-text">Salvataggio in Cloud...</div>
-                    </div>
-                """, unsafe_allow_html=True)
+            # PANNELLO DI CONTROLLO
+            with st.container(border=True):
+                st.subheader("🛠️ Pannello Azioni")
+                c1, c2, c3 = st.columns([1, 2, 1])
+                with c1:
+                    qty_input = st.number_input("Quantità", min_value=1, value=1, step=1)
+                with c2:
+                    azione = st.radio("Seleziona Azione:", ["➖ PRELIEVO", "➕ CARICO", "🔧 RETTIFICA (=)"], horizontal=True)
                 
-                # 2. LOGICA
-                if codice not in st.session_state['magazzino']:
-                    st.session_state['magazzino'][codice] = {'qty': 0, 'scadenze': []}
-                
-                ref = st.session_state['magazzino'][codice]
-                tipo_azione_log = ""
-                err = False
-
+                scad_display, scad_sort = "-", None
                 if "CARICO" in azione:
-                    ref['qty'] += qty_input
-                    ref['scadenze'].append({'display': scad_display, 'sort': scad_sort, 'qty': qty_input})
-                    ref['scadenze'].sort(key=lambda x: x['sort'])
-                    tipo_azione_log = "Carico"
+                    with c3:
+                        cm, ca = st.columns(2)
+                        mm = cm.selectbox("Mese", range(1, 13))
+                        yy = ca.selectbox("Anno", range(datetime.now().year, datetime.now().year + 6))
+                        scad_display = f"{mm:02d}/{yy}"
+                        scad_sort = f"{yy}-{mm:02d}"
 
-                elif "PRELIEVO" in azione:
-                    if ref['qty'] < qty_input:
-                        err = True
-                    else:
-                        ref['qty'] -= qty_input
-                        rem = qty_input
-                        new_scad = []
-                        for batch in ref['scadenze']:
-                            if rem > 0:
-                                if batch['qty'] > rem:
-                                    batch['qty'] -= rem
-                                    rem = 0
-                                    new_scad.append(batch)
-                                else:
-                                    rem -= batch['qty']
-                            else:
-                                new_scad.append(batch)
-                        ref['scadenze'] = new_scad
-                        tipo_azione_log = "Prelievo"
+                if st.button("🚀 ESEGUI OPERAZIONE", type="primary", use_container_width=True):
+                    loader_placeholder = st.empty()
+                    loader_placeholder.markdown("""
+                        <div id="custom-loader">
+                            <div class="spinner"></div>
+                            <div class="loading-text">Salvataggio in Cloud...</div>
+                        </div>
+                    """, unsafe_allow_html=True)
+                    
+                    if codice not in st.session_state['magazzino']:
+                        st.session_state['magazzino'][codice] = {'qty': 0, 'scadenze': []}
+                    
+                    ref = st.session_state['magazzino'][codice]
+                    tipo_azione_log = ""
+                    err = False
 
-                elif "RETTIFICA" in azione:
-                    diff = qty_input - ref['qty']
-                    if diff == 0: err = True
-                    else:
-                        ref['qty'] = qty_input
-                        if diff > 0: ref['scadenze'].append({'display': 'MANUALE', 'sort': '9999-12', 'qty': diff})
+                    if "CARICO" in azione:
+                        ref['qty'] += qty_input
+                        ref['scadenze'].append({'display': scad_display, 'sort': scad_sort, 'qty': qty_input})
+                        ref['scadenze'].sort(key=lambda x: x['sort'])
+                        tipo_azione_log = "Carico"
+
+                    elif "PRELIEVO" in azione:
+                        if ref['qty'] < qty_input:
+                            err = True
                         else:
-                            da_togliere = abs(diff)
+                            ref['qty'] -= qty_input
+                            rem = qty_input
                             new_scad = []
                             for batch in ref['scadenze']:
-                                if da_togliere > 0:
-                                    if batch['qty'] > da_togliere:
-                                        batch['qty'] -= da_togliere
-                                        da_togliere = 0
+                                if rem > 0:
+                                    if batch['qty'] > rem:
+                                        batch['qty'] -= rem
+                                        rem = 0
                                         new_scad.append(batch)
                                     else:
-                                        da_togliere -= batch['qty']
+                                        rem -= batch['qty']
                                 else:
                                     new_scad.append(batch)
                             ref['scadenze'] = new_scad
-                        tipo_azione_log = "Rettifica"
+                            tipo_azione_log = "Prelievo"
 
-                # 3. FINE
-                if err:
-                    loader_placeholder.empty()
-                    if "PRELIEVO" in azione: st.error("Quantità insufficiente!")
-                    else: st.warning("Nessuna modifica.")
-                else:
-                    update_inventory(st.session_state['magazzino'])
-                    st.session_state['cloud_log'] = manage_log_cloud(
-                        tipo_azione_log, 
-                        row_art['Descrizione'], 
-                        qty_input if "RETTIFICA" not in azione else f"-> {qty_input}"
-                    )
-                    loader_placeholder.empty()
-                    st.toast(f"✅ Salvato: {azione} eseguita!", icon="☁️")
-                    time.sleep(1) 
-                    st.rerun()
+                    elif "RETTIFICA" in azione:
+                        diff = qty_input - ref['qty']
+                        if diff == 0: err = True
+                        else:
+                            ref['qty'] = qty_input
+                            if diff > 0: ref['scadenze'].append({'display': 'MANUALE', 'sort': '9999-12', 'qty': diff})
+                            else:
+                                da_togliere = abs(diff)
+                                new_scad = []
+                                for batch in ref['scadenze']:
+                                    if da_togliere > 0:
+                                        if batch['qty'] > da_togliere:
+                                            batch['qty'] -= da_togliere
+                                            da_togliere = 0
+                                            new_scad.append(batch)
+                                        else:
+                                            da_togliere -= batch['qty']
+                                    else:
+                                        new_scad.append(batch)
+                                ref['scadenze'] = new_scad
+                            tipo_azione_log = "Rettifica"
+
+                    if err:
+                        loader_placeholder.empty()
+                        if "PRELIEVO" in azione: st.error("Quantità insufficiente!")
+                        else: st.warning("Nessuna modifica.")
+                    else:
+                        update_inventory(st.session_state['magazzino'])
+                        st.session_state['cloud_log'] = manage_log_cloud(
+                            tipo_azione_log, 
+                            row_art['Descrizione'], 
+                            qty_input if "RETTIFICA" not in azione else f"-> {qty_input}"
+                        )
+                        loader_placeholder.empty()
+                        st.toast(f"✅ Salvato: {azione} eseguita!", icon="☁️")
+                        time.sleep(1) 
+                        st.rerun()
+        else:
+            st.info("👆 Seleziona un prodotto dalla barra di ricerca per iniziare le operazioni.")
 
     # === TAB 2: ORDINI ===
     with tab_ordini:
@@ -465,7 +453,6 @@ if not df_master.empty:
             
             da_ord = max(0, target - row['Giacenza'])
             
-            # Calcolo Giorni Copertura
             copertura_giorni = None
             if consumo > 0 and row['Giacenza'] > 0:
                 consumo_giornaliero = consumo / 30
@@ -492,16 +479,17 @@ if not df_master.empty:
             ]
         df_view = df_view.sort_values(by=['Da_Ordinare'], ascending=False)
         
+        # --- MODIFICA 2: Ordine Colonne (Descrizione prima di Codice) ---
         st.dataframe(
-            df_view[['Stato', 'Categoria', 'Assay_Name', 'Codice', 'Descrizione', 'Giacenza', 'Target', 'Days_Left', 'Da_Ordinare']],
+            df_view[['Stato', 'Categoria', 'Assay_Name', 'Descrizione', 'Codice', 'Giacenza', 'Target', 'Days_Left', 'Da_Ordinare']],
             use_container_width=True,
             hide_index=True,
             column_config={
                 "Stato": st.column_config.TextColumn("Stato", width="small"),
                 "Categoria": st.column_config.TextColumn("Tipo", width="small"),
                 "Assay_Name": st.column_config.TextColumn("Assay", width="medium"),
-                "Codice": st.column_config.TextColumn("LN Abbott", width="medium"),
                 "Descrizione": st.column_config.TextColumn("Prodotto", width="large"),
+                "Codice": st.column_config.TextColumn("LN Abbott", width="medium"),
                 "Target": st.column_config.NumberColumn("Target"),
                 "Days_Left": st.column_config.NumberColumn("Copertura", format="%d gg", help="Giorni di autonomia stimati"),
                 "Da_Ordinare": st.column_config.NumberColumn("🛒 ORDINA")

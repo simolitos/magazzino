@@ -23,7 +23,7 @@ except:
     st.error("⚠️ Errore Segreti: Configura .streamlit/secrets.toml")
     st.stop()
 
-# --- CARICAMENTO DATI (CON FIX ECCEZIONI) ---
+# --- CARICAMENTO DATI (CON LOGICA AVANZATA) ---
 @st.cache_data
 def load_master_data():
     try:
@@ -47,37 +47,49 @@ def load_master_data():
         
         df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
         
-        # 1. Base pulizia
+        # 1. Base pulizia (Nome e Codice obbligatori)
         df = df[df['Descrizione'].notna() & df['Codice'].notna()] 
         df['Codice'] = df['Codice'].astype(str).str.replace('.0', '', regex=False)
+        df['Categoria'] = df['Categoria'].astype(str).fillna('')
         
-        # --- 2. GESTIONE ECCEZIONI VALORI ---
+        # --- 2. GESTIONE ECCEZIONI VALORI TESTUALI ---
         def clean_custom_values(val):
             if pd.isna(val): return val
             s = str(val).strip()
-            
-            # REGOLE SPECIFICHE UTENTE
-            if "25-30" in s: return 30        # GLP SCREWCAPS -> Prendi 30
-            if "28" in s and "?" in s: return 28  # ACID PROBE WASH (28???) -> Prendi 28
-            if "12/15" in s: return 15        # PRE-TRIGGER -> Prendi 15
-            
+            if "25-30" in s: return 30        
+            if "28" in s and "?" in s: return 28  
+            if "12/15" in s: return 15        
             return val
 
-        # Applica le eccezioni PRIMA di convertire
+        # Applica pulizia ai valori testuali noti
         df['Fabbisogno_Kit_Mese_Stimato'] = df['Fabbisogno_Kit_Mese_Stimato'].apply(clean_custom_values)
         
-        # Convertiamo in numeri. Tutto il resto ("?", "...", "testo") diventa NaN
-        df['Fabbisogno_Kit_Mese_Stimato'] = pd.to_numeric(df['Fabbisogno_Kit_Mese_Stimato'], errors='coerce')
+        # Crea colonna numerica di appoggio (NaN se non è numero)
+        df['Kit_Mese_Numeric'] = pd.to_numeric(df['Fabbisogno_Kit_Mese_Stimato'], errors='coerce')
         
-        # ELIMINIAMO LE RIGHE DOVE IL VALORE È NULLO
-        df = df.dropna(subset=['Fabbisogno_Kit_Mese_Stimato'])
+        # --- 3. FILTRO "CHI RESTA NEL MAGAZZINO?" ---
+        # Regola 1: Ha un numero valido nella colonna Kit/Mese
+        has_valid_consumption = df['Kit_Mese_Numeric'].notna()
         
-        # 3. Altre conversioni
+        # Regola 2: È un Calibratore (CAL) -> Si tiene SEMPRE, anche senza consumo
+        is_calibrator = df['Categoria'].str.upper().str.contains("CAL")
+        
+        # Regola 3: È l'Omocisteina (Codice 09P2820) -> Si tiene SEMPRE
+        is_homocysteine = df['Codice'].str.contains("09P2820", case=False)
+        
+        # APPLICA IL FILTRO: Tieni se (Valido) OPPURE (Calibratore) OPPURE (Omocisteina)
+        df = df[has_valid_consumption | is_calibrator | is_homocysteine]
+        
+        # --- 4. DATA FIXING (FORZATURE) ---
+        # Converti le colonne numeriche
         for col in ['Test_Mensili_Reali', 'Test_per_Scatola']:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             else:
                 df[col] = 0
+                
+        # FIX OMOCISTEINA: Imposta consumo 1000 test/mese
+        df.loc[df['Codice'].str.contains("09P2820", case=False), 'Test_Mensili_Reali'] = 1000
 
         df['Prodotto_Label'] = df['Descrizione'] + " [" + df['Codice'] + "]"
         return df
@@ -85,7 +97,7 @@ def load_master_data():
         st.error(f"Errore Excel: {e}")
         return pd.DataFrame()
 
-# --- FUNZIONI CLOUD (INVENTARIO) ---
+# --- FUNZIONI CLOUD ---
 def fetch_inventory():
     try:
         df_db = conn.read(worksheet="Foglio1", ttl=0)
@@ -119,7 +131,6 @@ def update_inventory(magazzino_dict):
         
     conn.update(worksheet="Foglio1", data=df_new)
 
-# --- FUNZIONI CLOUD (LOG 7 GIORNI) ---
 def manage_log_cloud(azione, prodotto_nome, qta):
     try:
         try: df_log = conn.read(worksheet="Logs", ttl=0)
@@ -153,7 +164,6 @@ def fetch_only_log():
         return df_log
     except: return pd.DataFrame()
 
-# --- FUNZIONE PDF ---
 class PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 15)
@@ -198,7 +208,6 @@ def create_pdf_report(df_data):
 # --- APP PRINCIPALE ---
 st.title("🏥 Gestione Lab Abbott")
 
-# SIDEBAR
 with st.sidebar:
     st.header("🖨️ STAMPA")
     if st.button("📄 Genera PDF Giacenza"):
@@ -351,10 +360,12 @@ if not df_master.empty:
         
         def calcola_stato(row):
             consumo = 0
+            # PRIMA: Controlla se abbiamo il dato preciso in Test
             if row['Test_Mensili_Reali'] > 0 and row['Test_per_Scatola'] > 0:
                 consumo = row['Test_Mensili_Reali'] / row['Test_per_Scatola']
-            elif row['Fabbisogno_Kit_Mese_Stimato'] > 0:
-                consumo = row['Fabbisogno_Kit_Mese_Stimato']
+            # DOPO: Altrimenti usa la stima in Kit (Kit_Mese_Numeric)
+            elif row['Kit_Mese_Numeric'] > 0:
+                consumo = row['Kit_Mese_Numeric']
             
             target = math.ceil(consumo * TARGET_MESI)
             is_cal = "CAL" in str(row['Categoria']).upper()

@@ -23,7 +23,7 @@ except:
     st.error("⚠️ Errore Segreti: Configura .streamlit/secrets.toml")
     st.stop()
 
-# --- CARICAMENTO DATI (CON LOGICA AVANZATA) ---
+# --- CARICAMENTO DATI (CON ASSAY NAME) ---
 @st.cache_data
 def load_master_data():
     try:
@@ -42,15 +42,17 @@ def load_master_data():
             '# Kit/Mese': 'Fabbisogno_Kit_Mese_Stimato', 
             'Test TOT MEDI/MESE Aggiustati': 'Test_Mensili_Reali',
             'KIT': 'Test_per_Scatola',
-            'Conf.to': 'Confezione'
+            'Conf.to': 'Confezione',
+            'Assay name': 'Assay_Name' # Nuova Colonna
         }
         
         df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
         
-        # 1. Base pulizia (Nome e Codice obbligatori)
+        # 1. Base pulizia
         df = df[df['Descrizione'].notna() & df['Codice'].notna()] 
         df['Codice'] = df['Codice'].astype(str).str.replace('.0', '', regex=False)
         df['Categoria'] = df['Categoria'].astype(str).fillna('')
+        df['Assay_Name'] = df['Assay_Name'].astype(str).fillna('') # Gestione vuoti
         
         # --- 2. GESTIONE ECCEZIONI VALORI TESTUALI ---
         def clean_custom_values(val):
@@ -61,37 +63,28 @@ def load_master_data():
             if "12/15" in s: return 15        
             return val
 
-        # Applica pulizia ai valori testuali noti
         df['Fabbisogno_Kit_Mese_Stimato'] = df['Fabbisogno_Kit_Mese_Stimato'].apply(clean_custom_values)
-        
-        # Crea colonna numerica di appoggio (NaN se non è numero)
         df['Kit_Mese_Numeric'] = pd.to_numeric(df['Fabbisogno_Kit_Mese_Stimato'], errors='coerce')
         
         # --- 3. FILTRO "CHI RESTA NEL MAGAZZINO?" ---
-        # Regola 1: Ha un numero valido nella colonna Kit/Mese
         has_valid_consumption = df['Kit_Mese_Numeric'].notna()
-        
-        # Regola 2: È un Calibratore (CAL) -> Si tiene SEMPRE, anche senza consumo
         is_calibrator = df['Categoria'].str.upper().str.contains("CAL")
-        
-        # Regola 3: È l'Omocisteina (Codice 09P2820) -> Si tiene SEMPRE
         is_homocysteine = df['Codice'].str.contains("09P2820", case=False)
         
-        # APPLICA IL FILTRO: Tieni se (Valido) OPPURE (Calibratore) OPPURE (Omocisteina)
         df = df[has_valid_consumption | is_calibrator | is_homocysteine]
         
-        # --- 4. DATA FIXING (FORZATURE) ---
-        # Converti le colonne numeriche
+        # --- 4. DATA FIXING ---
         for col in ['Test_Mensili_Reali', 'Test_per_Scatola']:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             else:
                 df[col] = 0
                 
-        # FIX OMOCISTEINA: Imposta consumo 1000 test/mese
+        # FIX OMOCISTEINA
         df.loc[df['Codice'].str.contains("09P2820", case=False), 'Test_Mensili_Reali'] = 1000
 
-        df['Prodotto_Label'] = df['Descrizione'] + " [" + df['Codice'] + "]"
+        # Etichetta di Ricerca Potenziata (Descrizione + Codice + Assay)
+        df['Prodotto_Label'] = df['Descrizione'] + " [" + df['Codice'] + "] - " + df['Assay_Name']
         return df
     except Exception as e:
         st.error(f"Errore Excel: {e}")
@@ -254,12 +247,21 @@ if not df_master.empty:
             def get_label(row):
                 c = str(row['Codice'])
                 g = st.session_state['magazzino'].get(c, {}).get('qty', 0)
-                return f"{row['Descrizione']} (Disp: {g})"
+                # Mostra anche Assay Name nel menu a tendina
+                assay = str(row['Assay_Name'])
+                assay_str = f" ({assay})" if assay and assay != 'nan' else ""
+                return f"{row['Descrizione']}{assay_str} (Disp: {g})"
             
             opzioni = df_master.apply(get_label, axis=1).tolist()
-            scelta = st.selectbox("Cerca Prodotto:", opzioni)
-            desc_base = scelta.split(" (Disp:")[0]
-            row_art = df_master[df_master['Descrizione'] == desc_base].iloc[0]
+            scelta = st.selectbox("Cerca Prodotto (Nome, Codice o Assay):", opzioni)
+            
+            # Parsing selezione (ora più robusto)
+            # Dobbiamo trovare la riga giusta basandoci sulla stringa selezionata
+            # Il modo più sicuro è cercare nel dataframe quale riga genera quella label
+            
+            # Creiamo una colonna temporanea 'Menu_Label' nel df_master per fare il match esatto
+            df_master['Menu_Label'] = df_master.apply(get_label, axis=1)
+            row_art = df_master[df_master['Menu_Label'] == scelta].iloc[0]
             codice = str(row_art['Codice'])
             
         with col_dati:
@@ -352,7 +354,7 @@ if not df_master.empty:
     with tab_ordini:
         st.markdown("### 🚦 Analisi Fabbisogno (1 Mese + 1 Settimana)")
         c_search, c_filtro = st.columns([2,1])
-        term = c_search.text_input("🔍 Cerca...", placeholder="Es. Urea, 8P57...")
+        term = c_search.text_input("🔍 Cerca (Nome, Codice, Assay Name)...", placeholder="Es. Urea, 8P57...")
         filtro = c_filtro.multiselect("Filtra:", ["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE", "🟢 OK"], default=["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE"])
         
         df_c = df_master.copy()
@@ -360,10 +362,8 @@ if not df_master.empty:
         
         def calcola_stato(row):
             consumo = 0
-            # PRIMA: Controlla se abbiamo il dato preciso in Test
             if row['Test_Mensili_Reali'] > 0 and row['Test_per_Scatola'] > 0:
                 consumo = row['Test_Mensili_Reali'] / row['Test_per_Scatola']
-            # DOPO: Altrimenti usa la stima in Kit (Kit_Mese_Numeric)
             elif row['Kit_Mese_Numeric'] > 0:
                 consumo = row['Kit_Mese_Numeric']
             
@@ -385,23 +385,27 @@ if not df_master.empty:
         df_view = df_c.copy()
         if filtro: df_view = df_view[df_view['Stato'].isin(filtro)]
         if term: 
+            # Ricerca POTENZIATA su 4 campi: Descrizione, Codice, Categoria, Assay Name
             df_view = df_view[
                 df_view['Descrizione'].str.contains(term, case=False, na=False) | 
                 df_view['Codice'].str.contains(term, case=False, na=False) |
-                df_view['Categoria'].str.contains(term, case=False, na=False)
+                df_view['Categoria'].str.contains(term, case=False, na=False) |
+                df_view['Assay_Name'].str.contains(term, case=False, na=False)
             ]
         df_view = df_view.sort_values(by=['Da_Ordinare'], ascending=False)
         
+        # TABELLA CON ASSAY NAME VISIBILE
         st.dataframe(
-            df_view[['Stato', 'Categoria', 'Codice', 'Descrizione', 'Giacenza', 'Target', 'Da_Ordinare']],
+            df_view[['Stato', 'Categoria', 'Assay_Name', 'Codice', 'Descrizione', 'Giacenza', 'Target', 'Da_Ordinare']],
             use_container_width=True,
             hide_index=True,
             column_config={
                 "Stato": st.column_config.TextColumn("Stato", width="small"),
                 "Categoria": st.column_config.TextColumn("Tipo", width="small"),
+                "Assay_Name": st.column_config.TextColumn("Assay", width="medium"), # Nuova Colonna
                 "Codice": st.column_config.TextColumn("LN Abbott", width="medium"),
                 "Descrizione": st.column_config.TextColumn("Prodotto", width="large"),
-                "Target": st.column_config.NumberColumn("Obiettivo (1.25 Mesi)"),
+                "Target": st.column_config.NumberColumn("Obiettivo"),
                 "Da_Ordinare": st.column_config.NumberColumn("🛒 ORDINA")
             }
         )

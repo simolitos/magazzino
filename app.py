@@ -6,9 +6,34 @@ import math
 import io
 import json
 from fpdf import FPDF
+import time
 
 # --- CONFIGURAZIONE ---
 st.set_page_config(page_title="VIRTUAL Magazzino", layout="wide", initial_sidebar_state="expanded")
+
+# --- STILE CSS PERSONALIZZATO ---
+st.markdown("""
+    <style>
+    /* Titolo Principale */
+    .title-text {
+        font-size: 38px;
+        font-weight: 800;
+        color: #1E3A8A; /* Blu scuro professionale */
+        margin-bottom: 0px;
+    }
+    .credits {
+        font-size: 14px;
+        font-style: italic;
+        color: #64748B;
+        vertical-align: middle;
+        margin-left: 10px;
+    }
+    /* Riduciamo spazio header */
+    .block-container {
+        padding-top: 2rem;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 # --- PARAMETRI DI CALCOLO ---
 MESI_COPERTURA = 1.0      
@@ -29,7 +54,6 @@ def load_master_data():
     try:
         df = pd.read_excel('dati.xlsx', engine='openpyxl')
         
-        # Merge Codici
         if 'LN ABBOTT' in df.columns and 'LN ABBOTT AGGIORNATI' in df.columns:
             df['Codice_Finale'] = df['LN ABBOTT'].fillna(df['LN ABBOTT AGGIORNATI'])
         else:
@@ -48,13 +72,13 @@ def load_master_data():
         
         df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
         
-        # 1. Base pulizia
+        # Pulizia base
         df = df[df['Descrizione'].notna() & df['Codice'].notna()] 
         df['Codice'] = df['Codice'].astype(str).str.replace('.0', '', regex=False)
         df['Categoria'] = df['Categoria'].astype(str).fillna('')
         df['Assay_Name'] = df['Assay_Name'].astype(str).fillna('')
         
-        # 2. Gestione Eccezioni Valori
+        # Fix Valori Custom
         def clean_custom_values(val):
             if pd.isna(val): return val
             s = str(val).strip()
@@ -66,24 +90,23 @@ def load_master_data():
         df['Fabbisogno_Kit_Mese_Stimato'] = df['Fabbisogno_Kit_Mese_Stimato'].apply(clean_custom_values)
         df['Kit_Mese_Numeric'] = pd.to_numeric(df['Fabbisogno_Kit_Mese_Stimato'], errors='coerce')
         
-        # 3. Filtro "Chi resta?"
+        # Filtro Logico
         has_valid_consumption = df['Kit_Mese_Numeric'].notna()
         is_calibrator = df['Categoria'].str.upper().str.contains("CAL")
         is_homocysteine = df['Codice'].str.contains("09P2820", case=False)
         
         df = df[has_valid_consumption | is_calibrator | is_homocysteine]
         
-        # 4. Data Fixing
+        # Data Fix
         for col in ['Test_Mensili_Reali', 'Test_per_Scatola']:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             else:
                 df[col] = 0
-                
-        # Fix Omocisteina
+        
+        # Fix Omocisteina (1000 test)
         df.loc[df['Codice'].str.contains("09P2820", case=False), 'Test_Mensili_Reali'] = 1000
 
-        df['Prodotto_Label'] = df['Descrizione'] + " [" + df['Codice'] + "] - " + df['Assay_Name']
         return df
     except Exception as e:
         st.error(f"Errore Excel: {e}")
@@ -138,6 +161,7 @@ def manage_log_cloud(azione, prodotto_nome, qta):
         
         df_log = pd.concat([pd.DataFrame([new_row]), df_log], ignore_index=True)
         
+        # Pulizia > 7 giorni
         sette_giorni_fa = now - timedelta(days=7)
         df_log['Timestamp'] = pd.to_datetime(df_log['Timestamp'])
         df_log_clean = df_log[df_log['Timestamp'] > sette_giorni_fa]
@@ -197,13 +221,16 @@ def create_pdf_report(df_data):
         pdf.ln(5)
     return pdf.output(dest='S').encode('latin-1')
 
-# --- APP PRINCIPALE ---
-
-# TITOLO PERSONALIZZATO CON CREDITS
+# --- APP HEADER ---
 st.markdown("""
-    # VIRTUAL: Magazzino Abbott-LT <span style='font-size: 15px; font-style: italic; color: grey; vertical-align: middle;'>@SimoneR</span>
+    <div>
+        <span class='title-text'>🌐VirtuaL: Magazzino Abbott-LT</span>
+        <span class='credits'>@SimoneR</span>
+    </div>
     """, unsafe_allow_html=True)
+st.divider()
 
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("🖨️ STAMPA")
     if st.button("📄 Genera PDF Giacenza"):
@@ -215,7 +242,7 @@ with st.sidebar:
             if not df_print.empty:
                 pdf_bytes = create_pdf_report(df_print)
                 st.download_button("📥 Scarica PDF", data=pdf_bytes, file_name=f"inventario_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf")
-            else: st.warning("Vuoto")
+            else: st.warning("Magazzino vuoto!")
 
     st.divider()
     st.header("📋 LOG (Ultimi 7gg)")
@@ -231,10 +258,11 @@ with st.sidebar:
         show_log = st.session_state['cloud_log'][['Data_Leggibile', 'Azione', 'Prodotto']].head(50)
         st.dataframe(show_log, hide_index=True, use_container_width=True)
     else:
-        st.caption("Nessun evento.")
+        st.caption("Nessun evento recente.")
 
 df_master = load_master_data()
 
+# Init Cloud
 if 'magazzino' not in st.session_state:
     with st.spinner("⏳ Sincronizzazione Cloud..."):
         st.session_state['magazzino'] = fetch_inventory()
@@ -243,7 +271,7 @@ if not df_master.empty:
     
     tab_mov, tab_ordini, tab_scadenze = st.tabs(["⚡ OPERAZIONI", "🛒 ORDINI & ANALISI", "🗓️ SCADENZE"])
 
-    # === TAB 1: OPERAZIONI ===
+    # === TAB 1: OPERAZIONI (Grafica Migliorata) ===
     with tab_mov:
         col_sel, col_dati = st.columns([3, 1])
         with col_sel:
@@ -255,105 +283,114 @@ if not df_master.empty:
                 return f"{row['Descrizione']}{assay_str} (Disp: {g})"
             
             opzioni = df_master.apply(get_label, axis=1).tolist()
-            scelta = st.selectbox("Cerca Prodotto:", opzioni)
+            scelta = st.selectbox("Cerca Prodotto (Nome, Codice, Assay):", opzioni)
             
-            # Ricerca riga corretta
+            # Match
             df_master['Menu_Label'] = df_master.apply(get_label, axis=1)
             row_art = df_master[df_master['Menu_Label'] == scelta].iloc[0]
             codice = str(row_art['Codice'])
             
         with col_dati:
             giacenza_attuale = st.session_state['magazzino'].get(codice, {}).get('qty', 0)
-            st.metric("Giacenza", f"{int(giacenza_attuale)} scatole")
+            st.metric("Giacenza Attuale", f"{int(giacenza_attuale)}", delta="scatole")
             if "CAL" in str(row_art['Categoria']).upper():
-                st.caption("⚠️ È un Calibratore")
+                st.warning("⚠️ Calibratore")
 
-        st.divider()
-        c1, c2, c3 = st.columns([1, 2, 1])
-        with c1:
-            qty_input = st.number_input("Quantità", min_value=1, value=1, step=1)
-        with c2:
-            azione = st.radio("Azione:", ["➖ PRELIEVO", "➕ CARICO", "🔧 RETTIFICA (=)"], horizontal=True)
-        
-        scad_display, scad_sort = "-", None
-        if "CARICO" in azione:
-            with c3:
-                cm, ca = st.columns(2)
-                mm = cm.selectbox("M", range(1, 13), label_visibility="collapsed")
-                yy = ca.selectbox("Y", range(datetime.now().year, datetime.now().year + 6), label_visibility="collapsed")
-                scad_display = f"{mm:02d}/{yy}"
-                scad_sort = f"{yy}-{mm:02d}"
-
-        if st.button("✅ ESEGUI E SALVA", type="primary", use_container_width=True):
-            if codice not in st.session_state['magazzino']:
-                st.session_state['magazzino'][codice] = {'qty': 0, 'scadenze': []}
+        # PANNELLO DI CONTROLLO (Container)
+        with st.container(border=True):
+            st.subheader("🛠️ Pannello Azioni")
+            c1, c2, c3 = st.columns([1, 2, 1])
+            with c1:
+                qty_input = st.number_input("Quantità", min_value=1, value=1, step=1)
+            with c2:
+                azione = st.radio("Seleziona Azione:", ["➖ PRELIEVO", "➕ CARICO", "🔧 RETTIFICA (=)"], horizontal=True)
             
-            ref = st.session_state['magazzino'][codice]
-            tipo_azione_log = ""
-            
+            scad_display, scad_sort = "-", None
             if "CARICO" in azione:
-                ref['qty'] += qty_input
-                ref['scadenze'].append({'display': scad_display, 'sort': scad_sort, 'qty': qty_input})
-                ref['scadenze'].sort(key=lambda x: x['sort'])
-                tipo_azione_log = "Carico"
+                with c3:
+                    cm, ca = st.columns(2)
+                    mm = cm.selectbox("Mese", range(1, 13))
+                    yy = ca.selectbox("Anno", range(datetime.now().year, datetime.now().year + 6))
+                    scad_display = f"{mm:02d}/{yy}"
+                    scad_sort = f"{yy}-{mm:02d}"
 
-            elif "PRELIEVO" in azione:
-                if ref['qty'] < qty_input:
-                    st.error("Quantità insufficiente!")
-                    st.stop()
-                ref['qty'] -= qty_input
-                rem = qty_input
-                new_scad = []
-                for batch in ref['scadenze']:
-                    if rem > 0:
-                        if batch['qty'] > rem:
-                            batch['qty'] -= rem
-                            rem = 0
-                            new_scad.append(batch)
-                        else:
-                            rem -= batch['qty']
+            if st.button("🚀 ESEGUI OPERAZIONE", type="primary", use_container_width=True):
+                if codice not in st.session_state['magazzino']:
+                    st.session_state['magazzino'][codice] = {'qty': 0, 'scadenze': []}
+                
+                ref = st.session_state['magazzino'][codice]
+                tipo_azione_log = ""
+                err = False
+
+                if "CARICO" in azione:
+                    ref['qty'] += qty_input
+                    ref['scadenze'].append({'display': scad_display, 'sort': scad_sort, 'qty': qty_input})
+                    ref['scadenze'].sort(key=lambda x: x['sort'])
+                    tipo_azione_log = "Carico"
+
+                elif "PRELIEVO" in azione:
+                    if ref['qty'] < qty_input:
+                        st.error("Quantità insufficiente in magazzino!")
+                        err = True
                     else:
-                        new_scad.append(batch)
-                ref['scadenze'] = new_scad
-                tipo_azione_log = "Prelievo"
-
-            elif "RETTIFICA" in azione:
-                diff = qty_input - ref['qty']
-                if diff == 0: st.stop()
-                ref['qty'] = qty_input
-                if diff > 0: ref['scadenze'].append({'display': 'MANUALE', 'sort': '9999-12', 'qty': diff})
-                else:
-                    da_togliere = abs(diff)
-                    new_scad = []
-                    for batch in ref['scadenze']:
-                        if da_togliere > 0:
-                            if batch['qty'] > da_togliere:
-                                batch['qty'] -= da_togliere
-                                da_togliere = 0
-                                new_scad.append(batch)
+                        ref['qty'] -= qty_input
+                        rem = qty_input
+                        new_scad = []
+                        for batch in ref['scadenze']:
+                            if rem > 0:
+                                if batch['qty'] > rem:
+                                    batch['qty'] -= rem
+                                    rem = 0
+                                    new_scad.append(batch)
+                                else:
+                                    rem -= batch['qty']
                             else:
-                                da_togliere -= batch['qty']
+                                new_scad.append(batch)
+                        ref['scadenze'] = new_scad
+                        tipo_azione_log = "Prelievo"
+
+                elif "RETTIFICA" in azione:
+                    diff = qty_input - ref['qty']
+                    if diff == 0: 
+                        st.toast("Nessuna modifica necessaria.")
+                        err = True
+                    else:
+                        ref['qty'] = qty_input
+                        if diff > 0: ref['scadenze'].append({'display': 'MANUALE', 'sort': '9999-12', 'qty': diff})
                         else:
-                            new_scad.append(batch)
-                    ref['scadenze'] = new_scad
-                tipo_azione_log = "Rettifica"
+                            da_togliere = abs(diff)
+                            new_scad = []
+                            for batch in ref['scadenze']:
+                                if da_togliere > 0:
+                                    if batch['qty'] > da_togliere:
+                                        batch['qty'] -= da_togliere
+                                        da_togliere = 0
+                                        new_scad.append(batch)
+                                    else:
+                                        da_togliere -= batch['qty']
+                                else:
+                                    new_scad.append(batch)
+                            ref['scadenze'] = new_scad
+                        tipo_azione_log = "Rettifica"
 
-            with st.status("Salvataggio Cloud...", expanded=False) as status:
-                update_inventory(st.session_state['magazzino'])
-                st.session_state['cloud_log'] = manage_log_cloud(
-                    tipo_azione_log, 
-                    row_art['Descrizione'], 
-                    qty_input if "RETTIFICA" not in azione else f"-> {qty_input}"
-                )
-                status.update(label="Salvato!", state="complete")
-            st.rerun()
+                if not err:
+                    # Salvataggio
+                    update_inventory(st.session_state['magazzino'])
+                    st.session_state['cloud_log'] = manage_log_cloud(
+                        tipo_azione_log, 
+                        row_art['Descrizione'], 
+                        qty_input if "RETTIFICA" not in azione else f"-> {qty_input}"
+                    )
+                    st.toast(f"✅ Operazione {azione} salvata!", icon="💾")
+                    time.sleep(1) # Pausa estetica
+                    st.rerun()
 
-    # === TAB 2: ORDINI ===
+    # === TAB 2: ORDINI (Grafica Migliorata) ===
     with tab_ordini:
-        st.markdown("### 🚦 Analisi Fabbisogno (1 Mese + 1 Settimana)")
+        st.markdown("### 🚦 Analisi Fabbisogno (1.25 Mesi)")
         c_search, c_filtro = st.columns([2,1])
-        term = c_search.text_input("🔍 Cerca (Nome, Codice, Assay)...", placeholder="Es. Urea, 8P57...")
-        filtro = c_filtro.multiselect("Filtra:", ["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE", "🟢 OK"], default=["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE"])
+        term = c_search.text_input("🔍 Cerca (Nome, Codice, Assay)...", placeholder="Scrivi qui...")
+        filtro = c_filtro.multiselect("Filtra Stato:", ["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE", "🟢 OK"], default=["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE"])
         
         df_c = df_master.copy()
         df_c['Giacenza'] = df_c['Codice'].apply(lambda x: st.session_state['magazzino'].get(x, {}).get('qty', 0))
@@ -371,14 +408,20 @@ if not df_master.empty:
             
             da_ord = max(0, target - row['Giacenza'])
             
+            # Calcolo Percentuale Copertura per barra grafica
+            coverage_pct = 0
+            if target > 0:
+                coverage_pct = row['Giacenza'] / target
+                if coverage_pct > 1: coverage_pct = 1.0 # Max 100%
+            
             stato = "🟢 OK"
             if is_cal and row['Giacenza'] < MIN_SCORTA_CAL: stato = "🔴 SOTTO MINIMO"
             elif row['Giacenza'] == 0: stato = "🔴 ESAURITO"
             elif da_ord > 0: stato = "🟡 DA ORDINARE"
             
-            return pd.Series([stato, target, da_ord])
+            return pd.Series([stato, target, da_ord, coverage_pct])
 
-        df_c[['Stato', 'Target', 'Da_Ordinare']] = df_c.apply(calcola_stato, axis=1)
+        df_c[['Stato', 'Target', 'Da_Ordinare', 'Coverage_Pct']] = df_c.apply(calcola_stato, axis=1)
         
         df_view = df_c.copy()
         if filtro: df_view = df_view[df_view['Stato'].isin(filtro)]
@@ -392,7 +435,7 @@ if not df_master.empty:
         df_view = df_view.sort_values(by=['Da_Ordinare'], ascending=False)
         
         st.dataframe(
-            df_view[['Stato', 'Categoria', 'Assay_Name', 'Codice', 'Descrizione', 'Giacenza', 'Target', 'Da_Ordinare']],
+            df_view[['Stato', 'Categoria', 'Assay_Name', 'Codice', 'Descrizione', 'Giacenza', 'Target', 'Coverage_Pct', 'Da_Ordinare']],
             use_container_width=True,
             hide_index=True,
             column_config={
@@ -401,13 +444,14 @@ if not df_master.empty:
                 "Assay_Name": st.column_config.TextColumn("Assay", width="medium"),
                 "Codice": st.column_config.TextColumn("LN Abbott", width="medium"),
                 "Descrizione": st.column_config.TextColumn("Prodotto", width="large"),
-                "Target": st.column_config.NumberColumn("Obiettivo"),
+                "Target": st.column_config.NumberColumn("Target"),
+                "Coverage_Pct": st.column_config.ProgressColumn("Copertura", format="%.0f%%", min_value=0, max_value=1),
                 "Da_Ordinare": st.column_config.NumberColumn("🛒 ORDINA")
             }
         )
         
         st.divider()
-        st.write("### 📤 Esporta Ordine")
+        st.write("### 📤 Esporta per Fornitore")
         df_export = df_c[df_c['Da_Ordinare'] > 0].copy()
         df_export = df_export[['Codice', 'Descrizione', 'Da_Ordinare', 'Confezione']]
         df_export = df_export.rename(columns={'Codice': 'Codice Prodotto', 'Da_Ordinare': 'Qta Ordine', 'Confezione': 'Conf.to'})
@@ -416,7 +460,7 @@ if not df_master.empty:
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
             df_export.to_excel(writer, index=False)
             
-        st.download_button("📥 Scarica Lista Fornitore (Solo Urgenze)", data=buffer.getvalue(), file_name=f"ordine_abbott_{datetime.now().strftime('%Y-%m-%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
+        st.download_button("📥 Scarica Ordine (Excel)", data=buffer.getvalue(), file_name=f"ordine_abbott_{datetime.now().strftime('%Y-%m-%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
 
     # === TAB 3: SCADENZE ===
     with tab_scadenze:

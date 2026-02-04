@@ -10,10 +10,11 @@ from fpdf import FPDF
 # --- CONFIGURAZIONE ---
 st.set_page_config(page_title="Gestione Magazzino", layout="wide", initial_sidebar_state="expanded")
 
-MESI_COPERTURA = 1.0      
-MESI_BUFFER = 0.5         
-TARGET_MESI = MESI_COPERTURA + MESI_BUFFER 
-MIN_SCORTA_CAL = 3        
+# --- NUOVI PARAMETRI DI CALCOLO ---
+MESI_COPERTURA = 1.0      # Copertura fissa per il lavoro mensile
+MESI_BUFFER = 0.25        # 1 Settimana di sicurezza (0.25 di un mese)
+TARGET_MESI = MESI_COPERTURA + MESI_BUFFER # Totale: 1.25 Mesi
+MIN_SCORTA_CAL = 3        # Minimo per i Calibratori
 
 # --- CONNESSIONE GOOGLE SHEETS ---
 try:
@@ -95,55 +96,38 @@ def update_inventory(magazzino_dict):
 
 # --- FUNZIONI CLOUD (LOG 7 GIORNI) ---
 def manage_log_cloud(azione, prodotto_nome, qta):
-    """Aggiunge un evento al log e pulisce i vecchi > 7 giorni"""
     try:
-        # 1. Legge il log attuale dal foglio "Logs"
-        try:
-            df_log = conn.read(worksheet="Logs", ttl=0)
-        except:
-            df_log = pd.DataFrame(columns=["Timestamp", "Data_Leggibile", "Azione", "Prodotto"])
+        try: df_log = conn.read(worksheet="Logs", ttl=0)
+        except: df_log = pd.DataFrame(columns=["Timestamp", "Data_Leggibile", "Azione", "Prodotto"])
 
-        # 2. Crea la nuova riga
         now = datetime.now()
         new_row = {
-            "Timestamp": now, # Formato datetime per i calcoli
+            "Timestamp": now,
             "Data_Leggibile": now.strftime("%d/%m %H:%M"),
             "Azione": f"{azione} ({qta})",
             "Prodotto": prodotto_nome
         }
         
-        # 3. Aggiunge al dataframe esistente
         df_log = pd.concat([pd.DataFrame([new_row]), df_log], ignore_index=True)
         
-        # 4. PULIZIA: Rimuove righe più vecchie di 7 giorni
+        # Pulizia > 7 giorni
         sette_giorni_fa = now - timedelta(days=7)
-        
-        # Assicuriamoci che Timestamp sia datetime
         df_log['Timestamp'] = pd.to_datetime(df_log['Timestamp'])
-        
-        # Filtra (Mantiene solo i recenti)
         df_log_clean = df_log[df_log['Timestamp'] > sette_giorni_fa]
         
-        # 5. Salva su Google Sheets
         conn.update(worksheet="Logs", data=df_log_clean)
-        
         return df_log_clean
-        
     except Exception as e:
-        st.error(f"Errore nel salvare il Log: {e}")
         return pd.DataFrame()
 
 def fetch_only_log():
-    """Scarica solo il log per visualizzarlo"""
     try:
         df_log = conn.read(worksheet="Logs", ttl=0)
         if not df_log.empty:
-            # Ordina dal più recente
             df_log['Timestamp'] = pd.to_datetime(df_log['Timestamp'])
             df_log = df_log.sort_values(by='Timestamp', ascending=False)
         return df_log
-    except:
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
 # --- FUNZIONE PDF ---
 class PDF(FPDF):
@@ -166,12 +150,15 @@ def create_pdf_report(df_data):
         pdf.set_font('Arial', 'B', 12)
         cat_clean = cat.encode('latin-1', 'replace').decode('latin-1')
         pdf.cell(0, 10, f"CATEGORIA: {cat_clean}", 1, 1, 'L', fill=True)
+        
         subset = df_data[df_data['Categoria'] == cat].sort_values(by='Descrizione')
+        
         pdf.set_font('Arial', 'B', 9)
         pdf.cell(30, 8, "Codice", 1)
         pdf.cell(130, 8, "Prodotto", 1)
         pdf.cell(30, 8, "Giacenza", 1)
         pdf.ln()
+        
         pdf.set_font('Arial', '', 9)
         for _, row in subset.iterrows():
             nome = str(row['Descrizione'])[:75].encode('latin-1', 'replace').decode('latin-1')
@@ -187,7 +174,7 @@ def create_pdf_report(df_data):
 # --- APP PRINCIPALE ---
 st.title("🏥 Gestione Lab Abbott")
 
-# SIDEBAR: LOG 7 GIORNI
+# SIDEBAR
 with st.sidebar:
     st.header("🖨️ STAMPA")
     if st.button("📄 Genera PDF Giacenza"):
@@ -202,10 +189,8 @@ with st.sidebar:
             else: st.warning("Vuoto")
 
     st.divider()
-    
     st.header("📋 LOG (Ultimi 7gg)")
     
-    # Carica log da Cloud (o usa quello appena aggiornato)
     if 'cloud_log' not in st.session_state:
         st.session_state['cloud_log'] = fetch_only_log()
     
@@ -214,11 +199,10 @@ with st.sidebar:
         st.rerun()
 
     if not st.session_state['cloud_log'].empty:
-        # Mostra tabella pulita
         show_log = st.session_state['cloud_log'][['Data_Leggibile', 'Azione', 'Prodotto']].head(50)
         st.dataframe(show_log, hide_index=True, use_container_width=True)
     else:
-        st.caption("Nessun evento recente.")
+        st.caption("Nessun evento.")
 
 df_master = load_master_data()
 
@@ -321,26 +305,19 @@ if not df_master.empty:
                     ref['scadenze'] = new_scad
                 tipo_azione_log = "Rettifica"
 
-            # SALVATAGGIO DOPPIO: INVENTARIO + LOG
             with st.status("Salvataggio Cloud...", expanded=False) as status:
-                st.write("Aggiornamento Inventario...")
                 update_inventory(st.session_state['magazzino'])
-                
-                st.write("Aggiornamento LOG...")
-                # Chiama la nuova funzione che gestisce il Log e i 7 giorni
                 st.session_state['cloud_log'] = manage_log_cloud(
                     tipo_azione_log, 
                     row_art['Descrizione'], 
                     qty_input if "RETTIFICA" not in azione else f"-> {qty_input}"
                 )
-                
                 status.update(label="Salvato!", state="complete")
-
             st.rerun()
 
     # === TAB 2: ORDINI ===
     with tab_ordini:
-        st.markdown("### 🚦 Analisi Fabbisogno")
+        st.markdown("### 🚦 Analisi Fabbisogno (1 Mese + 1 Settimana)")
         c_search, c_filtro = st.columns([2,1])
         term = c_search.text_input("🔍 Cerca...", placeholder="Es. Urea, 8P57...")
         filtro = c_filtro.multiselect("Filtra:", ["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE", "🟢 OK"], default=["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE"])
@@ -389,7 +366,7 @@ if not df_master.empty:
                 "Categoria": st.column_config.TextColumn("Tipo", width="small"),
                 "Codice": st.column_config.TextColumn("LN Abbott", width="medium"),
                 "Descrizione": st.column_config.TextColumn("Prodotto", width="large"),
-                "Target": st.column_config.NumberColumn("Obiettivo"),
+                "Target": st.column_config.NumberColumn("Obiettivo (1.25 Mesi)"),
                 "Da_Ordinare": st.column_config.NumberColumn("🛒 ORDINA")
             }
         )
@@ -404,13 +381,7 @@ if not df_master.empty:
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
             df_export.to_excel(writer, index=False)
             
-        st.download_button(
-            label="📥 Scarica Lista Fornitore (Solo Urgenze)",
-            data=buffer.getvalue(),
-            file_name=f"ordine_abbott_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary"
-        )
+        st.download_button("📥 Scarica Lista Fornitore (Solo Urgenze)", data=buffer.getvalue(), file_name=f"ordine_abbott_{datetime.now().strftime('%Y-%m-%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
 
     # === TAB 3: SCADENZE ===
     with tab_scadenze:

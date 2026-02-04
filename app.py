@@ -10,11 +10,11 @@ from fpdf import FPDF
 # --- CONFIGURAZIONE ---
 st.set_page_config(page_title="Gestione Magazzino", layout="wide", initial_sidebar_state="expanded")
 
-# --- NUOVI PARAMETRI DI CALCOLO ---
-MESI_COPERTURA = 1.0      # Copertura fissa per il lavoro mensile
-MESI_BUFFER = 0.25        # 1 Settimana di sicurezza (0.25 di un mese)
-TARGET_MESI = MESI_COPERTURA + MESI_BUFFER # Totale: 1.25 Mesi
-MIN_SCORTA_CAL = 3        # Minimo per i Calibratori
+# --- PARAMETRI DI CALCOLO ---
+MESI_COPERTURA = 1.0      
+MESI_BUFFER = 0.25        # 1 Settimana
+TARGET_MESI = MESI_COPERTURA + MESI_BUFFER 
+MIN_SCORTA_CAL = 3        
 
 # --- CONNESSIONE GOOGLE SHEETS ---
 try:
@@ -23,12 +23,13 @@ except:
     st.error("⚠️ Errore Segreti: Configura .streamlit/secrets.toml")
     st.stop()
 
-# --- CARICAMENTO DATI ---
+# --- CARICAMENTO DATI (CON FIX ECCEZIONI) ---
 @st.cache_data
 def load_master_data():
     try:
         df = pd.read_excel('dati.xlsx', engine='openpyxl')
         
+        # Merge Codici
         if 'LN ABBOTT' in df.columns and 'LN ABBOTT AGGIORNATI' in df.columns:
             df['Codice_Finale'] = df['LN ABBOTT'].fillna(df['LN ABBOTT AGGIORNATI'])
         else:
@@ -45,10 +46,34 @@ def load_master_data():
         }
         
         df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+        
+        # 1. Base pulizia
         df = df[df['Descrizione'].notna() & df['Codice'].notna()] 
         df['Codice'] = df['Codice'].astype(str).str.replace('.0', '', regex=False)
         
-        for col in ['Test_Mensili_Reali', 'Test_per_Scatola', 'Fabbisogno_Kit_Mese_Stimato']:
+        # --- 2. GESTIONE ECCEZIONI VALORI ---
+        def clean_custom_values(val):
+            if pd.isna(val): return val
+            s = str(val).strip()
+            
+            # REGOLE SPECIFICHE UTENTE
+            if "25-30" in s: return 30        # GLP SCREWCAPS -> Prendi 30
+            if "28" in s and "?" in s: return 28  # ACID PROBE WASH (28???) -> Prendi 28
+            if "12/15" in s: return 15        # PRE-TRIGGER -> Prendi 15
+            
+            return val
+
+        # Applica le eccezioni PRIMA di convertire
+        df['Fabbisogno_Kit_Mese_Stimato'] = df['Fabbisogno_Kit_Mese_Stimato'].apply(clean_custom_values)
+        
+        # Convertiamo in numeri. Tutto il resto ("?", "...", "testo") diventa NaN
+        df['Fabbisogno_Kit_Mese_Stimato'] = pd.to_numeric(df['Fabbisogno_Kit_Mese_Stimato'], errors='coerce')
+        
+        # ELIMINIAMO LE RIGHE DOVE IL VALORE È NULLO
+        df = df.dropna(subset=['Fabbisogno_Kit_Mese_Stimato'])
+        
+        # 3. Altre conversioni
+        for col in ['Test_Mensili_Reali', 'Test_per_Scatola']:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             else:
@@ -110,7 +135,6 @@ def manage_log_cloud(azione, prodotto_nome, qta):
         
         df_log = pd.concat([pd.DataFrame([new_row]), df_log], ignore_index=True)
         
-        # Pulizia > 7 giorni
         sette_giorni_fa = now - timedelta(days=7)
         df_log['Timestamp'] = pd.to_datetime(df_log['Timestamp'])
         df_log_clean = df_log[df_log['Timestamp'] > sette_giorni_fa]

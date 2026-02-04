@@ -8,7 +8,7 @@ import json
 from fpdf import FPDF
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(page_title="Gestione Magazzino", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="VIRTUAL Magazzino", layout="wide", initial_sidebar_state="expanded")
 
 # --- PARAMETRI DI CALCOLO ---
 MESI_COPERTURA = 1.0      
@@ -23,7 +23,7 @@ except:
     st.error("⚠️ Errore Segreti: Configura .streamlit/secrets.toml")
     st.stop()
 
-# --- CARICAMENTO DATI (CON ASSAY NAME) ---
+# --- CARICAMENTO DATI ---
 @st.cache_data
 def load_master_data():
     try:
@@ -43,7 +43,7 @@ def load_master_data():
             'Test TOT MEDI/MESE Aggiustati': 'Test_Mensili_Reali',
             'KIT': 'Test_per_Scatola',
             'Conf.to': 'Confezione',
-            'Assay name': 'Assay_Name' # Nuova Colonna
+            'Assay name': 'Assay_Name'
         }
         
         df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
@@ -52,9 +52,9 @@ def load_master_data():
         df = df[df['Descrizione'].notna() & df['Codice'].notna()] 
         df['Codice'] = df['Codice'].astype(str).str.replace('.0', '', regex=False)
         df['Categoria'] = df['Categoria'].astype(str).fillna('')
-        df['Assay_Name'] = df['Assay_Name'].astype(str).fillna('') # Gestione vuoti
+        df['Assay_Name'] = df['Assay_Name'].astype(str).fillna('')
         
-        # --- 2. GESTIONE ECCEZIONI VALORI TESTUALI ---
+        # 2. Gestione Eccezioni Valori
         def clean_custom_values(val):
             if pd.isna(val): return val
             s = str(val).strip()
@@ -66,24 +66,23 @@ def load_master_data():
         df['Fabbisogno_Kit_Mese_Stimato'] = df['Fabbisogno_Kit_Mese_Stimato'].apply(clean_custom_values)
         df['Kit_Mese_Numeric'] = pd.to_numeric(df['Fabbisogno_Kit_Mese_Stimato'], errors='coerce')
         
-        # --- 3. FILTRO "CHI RESTA NEL MAGAZZINO?" ---
+        # 3. Filtro "Chi resta?"
         has_valid_consumption = df['Kit_Mese_Numeric'].notna()
         is_calibrator = df['Categoria'].str.upper().str.contains("CAL")
         is_homocysteine = df['Codice'].str.contains("09P2820", case=False)
         
         df = df[has_valid_consumption | is_calibrator | is_homocysteine]
         
-        # --- 4. DATA FIXING ---
+        # 4. Data Fixing
         for col in ['Test_Mensili_Reali', 'Test_per_Scatola']:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             else:
                 df[col] = 0
                 
-        # FIX OMOCISTEINA
+        # Fix Omocisteina
         df.loc[df['Codice'].str.contains("09P2820", case=False), 'Test_Mensili_Reali'] = 1000
 
-        # Etichetta di Ricerca Potenziata (Descrizione + Codice + Assay)
         df['Prodotto_Label'] = df['Descrizione'] + " [" + df['Codice'] + "] - " + df['Assay_Name']
         return df
     except Exception as e:
@@ -199,7 +198,11 @@ def create_pdf_report(df_data):
     return pdf.output(dest='S').encode('latin-1')
 
 # --- APP PRINCIPALE ---
-st.title("🏥 Gestione Lab Abbott")
+
+# TITOLO PERSONALIZZATO CON CREDITS
+st.markdown("""
+    # VIRTUAL: Magazzino Abbott-LT <span style='font-size: 15px; font-style: italic; color: grey; vertical-align: middle;'>@SimoneR</span>
+    """, unsafe_allow_html=True)
 
 with st.sidebar:
     st.header("🖨️ STAMPA")
@@ -247,19 +250,14 @@ if not df_master.empty:
             def get_label(row):
                 c = str(row['Codice'])
                 g = st.session_state['magazzino'].get(c, {}).get('qty', 0)
-                # Mostra anche Assay Name nel menu a tendina
                 assay = str(row['Assay_Name'])
                 assay_str = f" ({assay})" if assay and assay != 'nan' else ""
                 return f"{row['Descrizione']}{assay_str} (Disp: {g})"
             
             opzioni = df_master.apply(get_label, axis=1).tolist()
-            scelta = st.selectbox("Cerca Prodotto (Nome, Codice o Assay):", opzioni)
+            scelta = st.selectbox("Cerca Prodotto:", opzioni)
             
-            # Parsing selezione (ora più robusto)
-            # Dobbiamo trovare la riga giusta basandoci sulla stringa selezionata
-            # Il modo più sicuro è cercare nel dataframe quale riga genera quella label
-            
-            # Creiamo una colonna temporanea 'Menu_Label' nel df_master per fare il match esatto
+            # Ricerca riga corretta
             df_master['Menu_Label'] = df_master.apply(get_label, axis=1)
             row_art = df_master[df_master['Menu_Label'] == scelta].iloc[0]
             codice = str(row_art['Codice'])
@@ -354,7 +352,7 @@ if not df_master.empty:
     with tab_ordini:
         st.markdown("### 🚦 Analisi Fabbisogno (1 Mese + 1 Settimana)")
         c_search, c_filtro = st.columns([2,1])
-        term = c_search.text_input("🔍 Cerca (Nome, Codice, Assay Name)...", placeholder="Es. Urea, 8P57...")
+        term = c_search.text_input("🔍 Cerca (Nome, Codice, Assay)...", placeholder="Es. Urea, 8P57...")
         filtro = c_filtro.multiselect("Filtra:", ["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE", "🟢 OK"], default=["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE"])
         
         df_c = df_master.copy()
@@ -385,7 +383,6 @@ if not df_master.empty:
         df_view = df_c.copy()
         if filtro: df_view = df_view[df_view['Stato'].isin(filtro)]
         if term: 
-            # Ricerca POTENZIATA su 4 campi: Descrizione, Codice, Categoria, Assay Name
             df_view = df_view[
                 df_view['Descrizione'].str.contains(term, case=False, na=False) | 
                 df_view['Codice'].str.contains(term, case=False, na=False) |
@@ -394,7 +391,6 @@ if not df_master.empty:
             ]
         df_view = df_view.sort_values(by=['Da_Ordinare'], ascending=False)
         
-        # TABELLA CON ASSAY NAME VISIBILE
         st.dataframe(
             df_view[['Stato', 'Categoria', 'Assay_Name', 'Codice', 'Descrizione', 'Giacenza', 'Target', 'Da_Ordinare']],
             use_container_width=True,
@@ -402,7 +398,7 @@ if not df_master.empty:
             column_config={
                 "Stato": st.column_config.TextColumn("Stato", width="small"),
                 "Categoria": st.column_config.TextColumn("Tipo", width="small"),
-                "Assay_Name": st.column_config.TextColumn("Assay", width="medium"), # Nuova Colonna
+                "Assay_Name": st.column_config.TextColumn("Assay", width="medium"),
                 "Codice": st.column_config.TextColumn("LN Abbott", width="medium"),
                 "Descrizione": st.column_config.TextColumn("Prodotto", width="large"),
                 "Target": st.column_config.NumberColumn("Obiettivo"),

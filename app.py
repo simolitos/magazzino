@@ -33,7 +33,7 @@ st.markdown("""
     }
     
     /* --- CUSTOM LOADER (Overlay) --- */
-    .stSpinner { display: none; } /* Nascondi spinner default se possibile */
+    .stSpinner { display: none; } /* Nascondi spinner default */
     
     #custom-loader {
         position: fixed;
@@ -41,8 +41,8 @@ st.markdown("""
         left: 0;
         width: 100%;
         height: 100%;
-        background-color: rgba(255, 255, 255, 0.85); /* Sfondo bianco semi-trasperente */
-        backdrop-filter: blur(5px); /* Effetto sfocatura */
+        background-color: rgba(255, 255, 255, 0.85);
+        backdrop-filter: blur(5px);
         z-index: 999999;
         display: flex;
         flex-direction: column;
@@ -54,7 +54,7 @@ st.markdown("""
         width: 50px;
         height: 50px;
         border: 5px solid #f3f3f3;
-        border-top: 5px solid #1E3A8A; /* Blu del titolo */
+        border-top: 5px solid #1E3A8A;
         border-radius: 50%;
         animation: spin 1s linear infinite;
         margin-bottom: 15px;
@@ -123,12 +123,16 @@ def load_master_data():
         df['Categoria'] = df['Categoria'].astype(str).fillna('')
         df['Assay_Name'] = df['Assay_Name'].astype(str).fillna('')
         
+        # --- GESTIONE VALORI SPECIALI ---
         def clean_custom_values(val):
             if pd.isna(val): return val
             s = str(val).strip()
-            if "25-30" in s: return 30        
-            if "28" in s and "?" in s: return 28  
-            if "12/15" in s: return 15        
+            
+            # REGOLE UTENTE
+            if "25-30" in s: return 30        # GLP SCREWCAPS
+            if "28" in s and "?" in s: return 4   # ACID PROBE WASH (Era 28???, ora forzato a 4)
+            if "12/15" in s: return 15        # PRE-TRIGGER
+            
             return val
 
         df['Fabbisogno_Kit_Mese_Stimato'] = df['Fabbisogno_Kit_Mese_Stimato'].apply(clean_custom_values)
@@ -354,9 +358,9 @@ if not df_master.empty:
                     scad_display = f"{mm:02d}/{yy}"
                     scad_sort = f"{yy}-{mm:02d}"
 
-            # PULSANTE ESEGUI CON LOADER PERSONALIZZATO
+            # PULSANTE ESEGUI CON LOADER
             if st.button("🚀 ESEGUI OPERAZIONE", type="primary", use_container_width=True):
-                # 1. MOSTRA LOADER HTML
+                # 1. LOADER HTML
                 loader_placeholder = st.empty()
                 loader_placeholder.markdown("""
                     <div id="custom-loader">
@@ -365,7 +369,7 @@ if not df_master.empty:
                     </div>
                 """, unsafe_allow_html=True)
                 
-                # 2. LOGICA OPERAZIONE
+                # 2. LOGICA
                 if codice not in st.session_state['magazzino']:
                     st.session_state['magazzino'][codice] = {'qty': 0, 'scadenze': []}
                 
@@ -421,26 +425,24 @@ if not df_master.empty:
                             ref['scadenze'] = new_scad
                         tipo_azione_log = "Rettifica"
 
-                # 3. GESTIONE RISULTATO
+                # 3. FINE
                 if err:
-                    loader_placeholder.empty() # Rimuovi loader
+                    loader_placeholder.empty()
                     if "PRELIEVO" in azione: st.error("Quantità insufficiente!")
                     else: st.warning("Nessuna modifica.")
                 else:
-                    # SALVATAGGIO REALE
                     update_inventory(st.session_state['magazzino'])
                     st.session_state['cloud_log'] = manage_log_cloud(
                         tipo_azione_log, 
                         row_art['Descrizione'], 
                         qty_input if "RETTIFICA" not in azione else f"-> {qty_input}"
                     )
-                    
-                    loader_placeholder.empty() # Rimuovi loader
+                    loader_placeholder.empty()
                     st.toast(f"✅ Salvato: {azione} eseguita!", icon="☁️")
                     time.sleep(1) 
                     st.rerun()
 
-    # === TAB 2: ORDINI (Nuova Colonna Giorni) ===
+    # === TAB 2: ORDINI ===
     with tab_ordini:
         st.markdown("### 🚦 Analisi Fabbisogno (1.25 Mesi)")
         c_search, c_filtro = st.columns([2,1])
@@ -463,7 +465,7 @@ if not df_master.empty:
             
             da_ord = max(0, target - row['Giacenza'])
             
-            # --- NUOVO CALCOLO GIORNI COPERTURA ---
+            # Calcolo Giorni Copertura
             copertura_giorni = None
             if consumo > 0 and row['Giacenza'] > 0:
                 consumo_giornaliero = consumo / 30

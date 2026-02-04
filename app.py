@@ -224,7 +224,7 @@ def create_pdf_report(df_data):
 # --- APP HEADER ---
 st.markdown("""
     <div>
-        <span class='title-text'>🌐VirtuaL: Magazzino Abbott-LT</span>
+        <span class='title-text'>🌐 VirtuaL: Magazzino Abbott-LT</span>
         <span class='credits'>@SimoneR</span>
     </div>
     """, unsafe_allow_html=True)

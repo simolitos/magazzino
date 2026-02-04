@@ -11,14 +11,14 @@ import time
 # --- CONFIGURAZIONE ---
 st.set_page_config(page_title="VIRTUAL Magazzino", layout="wide", initial_sidebar_state="expanded")
 
-# --- STILE CSS PERSONALIZZATO ---
+# --- STILE CSS (Titoli + LOADING SPINNER) ---
 st.markdown("""
     <style>
     /* Titolo Principale */
     .title-text {
         font-size: 38px;
         font-weight: 800;
-        color: #1E3A8A; /* Blu scuro professionale */
+        color: #1E3A8A;
         margin-bottom: 0px;
     }
     .credits {
@@ -28,9 +28,55 @@ st.markdown("""
         vertical-align: middle;
         margin-left: 10px;
     }
-    /* Riduciamo spazio header */
     .block-container {
         padding-top: 2rem;
+    }
+    
+    /* --- CUSTOM LOADER (Overlay) --- */
+    .stSpinner { display: none; } /* Nascondi spinner default se possibile */
+    
+    #custom-loader {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(255, 255, 255, 0.85); /* Sfondo bianco semi-trasperente */
+        backdrop-filter: blur(5px); /* Effetto sfocatura */
+        z-index: 999999;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+    }
+    
+    .spinner {
+        width: 50px;
+        height: 50px;
+        border: 5px solid #f3f3f3;
+        border-top: 5px solid #1E3A8A; /* Blu del titolo */
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin-bottom: 15px;
+    }
+    
+    .loading-text {
+        font-family: 'Arial', sans-serif;
+        font-size: 18px;
+        font-weight: 600;
+        color: #1E3A8A;
+        animation: pulse 1.5s infinite;
+    }
+    
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    
+    @keyframes pulse {
+        0% { opacity: 0.6; }
+        50% { opacity: 1; }
+        100% { opacity: 0.6; }
     }
     </style>
     """, unsafe_allow_html=True)
@@ -72,13 +118,11 @@ def load_master_data():
         
         df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
         
-        # Pulizia base
         df = df[df['Descrizione'].notna() & df['Codice'].notna()] 
         df['Codice'] = df['Codice'].astype(str).str.replace('.0', '', regex=False)
         df['Categoria'] = df['Categoria'].astype(str).fillna('')
         df['Assay_Name'] = df['Assay_Name'].astype(str).fillna('')
         
-        # Fix Valori Custom
         def clean_custom_values(val):
             if pd.isna(val): return val
             s = str(val).strip()
@@ -90,21 +134,18 @@ def load_master_data():
         df['Fabbisogno_Kit_Mese_Stimato'] = df['Fabbisogno_Kit_Mese_Stimato'].apply(clean_custom_values)
         df['Kit_Mese_Numeric'] = pd.to_numeric(df['Fabbisogno_Kit_Mese_Stimato'], errors='coerce')
         
-        # Filtro Logico
         has_valid_consumption = df['Kit_Mese_Numeric'].notna()
         is_calibrator = df['Categoria'].str.upper().str.contains("CAL")
         is_homocysteine = df['Codice'].str.contains("09P2820", case=False)
         
         df = df[has_valid_consumption | is_calibrator | is_homocysteine]
         
-        # Data Fix
         for col in ['Test_Mensili_Reali', 'Test_per_Scatola']:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             else:
                 df[col] = 0
         
-        # Fix Omocisteina (1000 test)
         df.loc[df['Codice'].str.contains("09P2820", case=False), 'Test_Mensili_Reali'] = 1000
 
         return df
@@ -161,7 +202,6 @@ def manage_log_cloud(azione, prodotto_nome, qta):
         
         df_log = pd.concat([pd.DataFrame([new_row]), df_log], ignore_index=True)
         
-        # Pulizia > 7 giorni
         sette_giorni_fa = now - timedelta(days=7)
         df_log['Timestamp'] = pd.to_datetime(df_log['Timestamp'])
         df_log_clean = df_log[df_log['Timestamp'] > sette_giorni_fa]
@@ -271,7 +311,7 @@ if not df_master.empty:
     
     tab_mov, tab_ordini, tab_scadenze = st.tabs(["⚡ OPERAZIONI", "🛒 ORDINI & ANALISI", "🗓️ SCADENZE"])
 
-    # === TAB 1: OPERAZIONI (Grafica Migliorata) ===
+    # === TAB 1: OPERAZIONI ===
     with tab_mov:
         col_sel, col_dati = st.columns([3, 1])
         with col_sel:
@@ -296,7 +336,7 @@ if not df_master.empty:
             if "CAL" in str(row_art['Categoria']).upper():
                 st.warning("⚠️ Calibratore")
 
-        # PANNELLO DI CONTROLLO (Container)
+        # PANNELLO DI CONTROLLO
         with st.container(border=True):
             st.subheader("🛠️ Pannello Azioni")
             c1, c2, c3 = st.columns([1, 2, 1])
@@ -314,7 +354,18 @@ if not df_master.empty:
                     scad_display = f"{mm:02d}/{yy}"
                     scad_sort = f"{yy}-{mm:02d}"
 
+            # PULSANTE ESEGUI CON LOADER PERSONALIZZATO
             if st.button("🚀 ESEGUI OPERAZIONE", type="primary", use_container_width=True):
+                # 1. MOSTRA LOADER HTML
+                loader_placeholder = st.empty()
+                loader_placeholder.markdown("""
+                    <div id="custom-loader">
+                        <div class="spinner"></div>
+                        <div class="loading-text">Salvataggio in Cloud...</div>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                # 2. LOGICA OPERAZIONE
                 if codice not in st.session_state['magazzino']:
                     st.session_state['magazzino'][codice] = {'qty': 0, 'scadenze': []}
                 
@@ -330,7 +381,6 @@ if not df_master.empty:
 
                 elif "PRELIEVO" in azione:
                     if ref['qty'] < qty_input:
-                        st.error("Quantità insufficiente in magazzino!")
                         err = True
                     else:
                         ref['qty'] -= qty_input
@@ -351,9 +401,7 @@ if not df_master.empty:
 
                 elif "RETTIFICA" in azione:
                     diff = qty_input - ref['qty']
-                    if diff == 0: 
-                        st.toast("Nessuna modifica necessaria.")
-                        err = True
+                    if diff == 0: err = True
                     else:
                         ref['qty'] = qty_input
                         if diff > 0: ref['scadenze'].append({'display': 'MANUALE', 'sort': '9999-12', 'qty': diff})
@@ -373,19 +421,26 @@ if not df_master.empty:
                             ref['scadenze'] = new_scad
                         tipo_azione_log = "Rettifica"
 
-                if not err:
-                    # Salvataggio
+                # 3. GESTIONE RISULTATO
+                if err:
+                    loader_placeholder.empty() # Rimuovi loader
+                    if "PRELIEVO" in azione: st.error("Quantità insufficiente!")
+                    else: st.warning("Nessuna modifica.")
+                else:
+                    # SALVATAGGIO REALE
                     update_inventory(st.session_state['magazzino'])
                     st.session_state['cloud_log'] = manage_log_cloud(
                         tipo_azione_log, 
                         row_art['Descrizione'], 
                         qty_input if "RETTIFICA" not in azione else f"-> {qty_input}"
                     )
-                    st.toast(f"✅ Operazione {azione} salvata!", icon="💾")
-                    time.sleep(1) # Pausa estetica
+                    
+                    loader_placeholder.empty() # Rimuovi loader
+                    st.toast(f"✅ Salvato: {azione} eseguita!", icon="☁️")
+                    time.sleep(1) 
                     st.rerun()
 
-    # === TAB 2: ORDINI (Grafica Migliorata) ===
+    # === TAB 2: ORDINI (Nuova Colonna Giorni) ===
     with tab_ordini:
         st.markdown("### 🚦 Analisi Fabbisogno (1.25 Mesi)")
         c_search, c_filtro = st.columns([2,1])
@@ -408,20 +463,21 @@ if not df_master.empty:
             
             da_ord = max(0, target - row['Giacenza'])
             
-            # Calcolo Percentuale Copertura per barra grafica
-            coverage_pct = 0
-            if target > 0:
-                coverage_pct = row['Giacenza'] / target
-                if coverage_pct > 1: coverage_pct = 1.0 # Max 100%
+            # --- NUOVO CALCOLO GIORNI COPERTURA ---
+            copertura_giorni = None
+            if consumo > 0 and row['Giacenza'] > 0:
+                consumo_giornaliero = consumo / 30
+                days = int(row['Giacenza'] / consumo_giornaliero)
+                copertura_giorni = days
             
             stato = "🟢 OK"
             if is_cal and row['Giacenza'] < MIN_SCORTA_CAL: stato = "🔴 SOTTO MINIMO"
             elif row['Giacenza'] == 0: stato = "🔴 ESAURITO"
             elif da_ord > 0: stato = "🟡 DA ORDINARE"
             
-            return pd.Series([stato, target, da_ord, coverage_pct])
+            return pd.Series([stato, target, da_ord, copertura_giorni])
 
-        df_c[['Stato', 'Target', 'Da_Ordinare', 'Coverage_Pct']] = df_c.apply(calcola_stato, axis=1)
+        df_c[['Stato', 'Target', 'Da_Ordinare', 'Days_Left']] = df_c.apply(calcola_stato, axis=1)
         
         df_view = df_c.copy()
         if filtro: df_view = df_view[df_view['Stato'].isin(filtro)]
@@ -435,7 +491,7 @@ if not df_master.empty:
         df_view = df_view.sort_values(by=['Da_Ordinare'], ascending=False)
         
         st.dataframe(
-            df_view[['Stato', 'Categoria', 'Assay_Name', 'Codice', 'Descrizione', 'Giacenza', 'Target', 'Coverage_Pct', 'Da_Ordinare']],
+            df_view[['Stato', 'Categoria', 'Assay_Name', 'Codice', 'Descrizione', 'Giacenza', 'Target', 'Days_Left', 'Da_Ordinare']],
             use_container_width=True,
             hide_index=True,
             column_config={
@@ -445,7 +501,7 @@ if not df_master.empty:
                 "Codice": st.column_config.TextColumn("LN Abbott", width="medium"),
                 "Descrizione": st.column_config.TextColumn("Prodotto", width="large"),
                 "Target": st.column_config.NumberColumn("Target"),
-                "Coverage_Pct": st.column_config.ProgressColumn("Copertura", format="%.0f%%", min_value=0, max_value=1),
+                "Days_Left": st.column_config.NumberColumn("Copertura", format="%d gg", help="Giorni di autonomia stimati"),
                 "Da_Ordinare": st.column_config.NumberColumn("🛒 ORDINA")
             }
         )

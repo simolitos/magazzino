@@ -310,15 +310,13 @@ if not df_master.empty:
             
             opzioni = df_master.apply(get_label, axis=1).tolist()
             
-            # --- MODIFICA 1: Selectbox vuota all'inizio ---
             scelta = st.selectbox(
                 "Cerca Prodotto (Nome, Codice, Assay):", 
                 opzioni,
-                index=None, # Nessun prodotto preselezionato
-                placeholder="Digita per cercare..." # Testo guida
+                index=None,
+                placeholder="Digita per cercare..."
             )
             
-        # Mostra i dettagli SOLO se l'utente ha selezionato qualcosa
         if scelta:
             df_master['Menu_Label'] = df_master.apply(get_label, axis=1)
             row_art = df_master[df_master['Menu_Label'] == scelta].iloc[0]
@@ -330,7 +328,6 @@ if not df_master.empty:
                 if "CAL" in str(row_art['Categoria']).upper():
                     st.warning("⚠️ Calibratore")
 
-            # PANNELLO DI CONTROLLO
             with st.container(border=True):
                 st.subheader("🛠️ Pannello Azioni")
                 c1, c2, c3 = st.columns([1, 2, 1])
@@ -479,7 +476,6 @@ if not df_master.empty:
             ]
         df_view = df_view.sort_values(by=['Da_Ordinare'], ascending=False)
         
-        # --- MODIFICA 2: Ordine Colonne (Descrizione prima di Codice) ---
         st.dataframe(
             df_view[['Stato', 'Categoria', 'Assay_Name', 'Descrizione', 'Codice', 'Giacenza', 'Target', 'Days_Left', 'Da_Ordinare']],
             use_container_width=True,
@@ -498,9 +494,16 @@ if not df_master.empty:
         
         st.divider()
         st.write("### 📤 Esporta per Fornitore")
+        
+        # --- MODIFICA COLONNE EXCEL ESPORTATO ---
         df_export = df_c[df_c['Da_Ordinare'] > 0].copy()
-        df_export = df_export[['Codice', 'Descrizione', 'Da_Ordinare', 'Confezione']]
-        df_export = df_export.rename(columns={'Codice': 'Codice Prodotto', 'Da_Ordinare': 'Qta Ordine', 'Confezione': 'Conf.to'})
+        df_export = df_export[['Codice', 'Categoria', 'Descrizione', 'Da_Ordinare', 'Confezione']]
+        df_export = df_export.rename(columns={
+            'Codice': 'Codice Prodotto', 
+            'Categoria': 'Tipo (RGT/CAL/QC/CONS)',
+            'Da_Ordinare': 'Qta Ordine', 
+            'Confezione': 'Conf.to'
+        })
         
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:

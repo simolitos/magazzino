@@ -127,8 +127,6 @@ def load_master_data():
             else:
                 df[col] = 0
                 
-        # --- NOVITÀ: CALCOLO DINAMICO DEL CONSUMO ---
-        # Se non c'è il kit/mese, lo calcoliamo dividendo i test per la grandezza della scatola
         def calcola_kit_mancanti(row):
             if pd.isna(row['Kit_Mese_Numeric']) or row['Kit_Mese_Numeric'] == 0:
                 if row['Test_Mensili_Reali'] > 0 and row['Test_per_Scatola'] > 0:
@@ -137,18 +135,21 @@ def load_master_data():
             
         df['Kit_Mese_Numeric'] = df.apply(calcola_kit_mancanti, axis=1)
         
+        # FIX SICUREZZA: Trasformiamo eventuali rimanenti "NaN" in 0 per evitare crash in math.ceil
+        df['Kit_Mese_Numeric'] = df['Kit_Mese_Numeric'].fillna(0)
+        
         # --- REGOLE DI INCLUSIONE NEL MAGAZZINO ---
         has_valid_consumption = df['Kit_Mese_Numeric'] > 0
         is_cal = df['Categoria'].str.upper().str.contains("CAL")
         is_homocysteine = df['Codice'].str.contains("09P2820", case=False)
-        
-        # Regola Salva-Vita per i 3 prodotti specifici
         is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB", case=False) | df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB", case=False)
         
         df = df[has_valid_consumption | is_cal | is_homocysteine | is_special]
         
         # Fix Omocisteina
         df.loc[df['Codice'].str.contains("09P2820", case=False), 'Test_Mensili_Reali'] = 1000
+        # Ricalcolo per l'Omocisteina se necessario
+        df.loc[df['Codice'].str.contains("09P2820", case=False), 'Kit_Mese_Numeric'] = df.apply(calcola_kit_mancanti, axis=1)
 
         return df
     except Exception as e:
@@ -453,7 +454,10 @@ if not df_master.empty:
         df_c['Giacenza'] = df_c['Codice'].apply(lambda x: st.session_state['magazzino'].get(x, {}).get('qty', 0))
         
         def calcola_stato(row):
-            consumo = row['Kit_Mese_Numeric']
+            # DOPPIA RETE DI SICUREZZA: Se consumo è ancora strano/NaN, forziamo a 0
+            consumo = row.get('Kit_Mese_Numeric', 0)
+            if pd.isna(consumo) or consumo < 0:
+                consumo = 0
             
             target = math.ceil(consumo * TARGET_MESI)
             is_cal = "CAL" in str(row['Categoria']).upper()

@@ -121,18 +121,33 @@ def load_master_data():
         df['Fabbisogno_Kit_Mese_Stimato'] = df['Fabbisogno_Kit_Mese_Stimato'].apply(clean_custom_values)
         df['Kit_Mese_Numeric'] = pd.to_numeric(df['Fabbisogno_Kit_Mese_Stimato'], errors='coerce')
         
-        has_valid_consumption = df['Kit_Mese_Numeric'].notna()
-        is_cal = df['Categoria'].str.upper().str.contains("CAL")
-        is_homocysteine = df['Codice'].str.contains("09P2820", case=False)
-        
-        df = df[has_valid_consumption | is_cal | is_homocysteine]
-        
         for col in ['Test_Mensili_Reali', 'Test_per_Scatola']:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             else:
                 df[col] = 0
+                
+        # --- NOVITÀ: CALCOLO DINAMICO DEL CONSUMO ---
+        # Se non c'è il kit/mese, lo calcoliamo dividendo i test per la grandezza della scatola
+        def calcola_kit_mancanti(row):
+            if pd.isna(row['Kit_Mese_Numeric']) or row['Kit_Mese_Numeric'] == 0:
+                if row['Test_Mensili_Reali'] > 0 and row['Test_per_Scatola'] > 0:
+                    return row['Test_Mensili_Reali'] / row['Test_per_Scatola']
+            return row['Kit_Mese_Numeric']
+            
+        df['Kit_Mese_Numeric'] = df.apply(calcola_kit_mancanti, axis=1)
         
+        # --- REGOLE DI INCLUSIONE NEL MAGAZZINO ---
+        has_valid_consumption = df['Kit_Mese_Numeric'] > 0
+        is_cal = df['Categoria'].str.upper().str.contains("CAL")
+        is_homocysteine = df['Codice'].str.contains("09P2820", case=False)
+        
+        # Regola Salva-Vita per i 3 prodotti specifici
+        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB", case=False) | df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB", case=False)
+        
+        df = df[has_valid_consumption | is_cal | is_homocysteine | is_special]
+        
+        # Fix Omocisteina
         df.loc[df['Codice'].str.contains("09P2820", case=False), 'Test_Mensili_Reali'] = 1000
 
         return df
@@ -438,11 +453,7 @@ if not df_master.empty:
         df_c['Giacenza'] = df_c['Codice'].apply(lambda x: st.session_state['magazzino'].get(x, {}).get('qty', 0))
         
         def calcola_stato(row):
-            consumo = 0
-            if row['Test_Mensili_Reali'] > 0 and row['Test_per_Scatola'] > 0:
-                consumo = row['Test_Mensili_Reali'] / row['Test_per_Scatola']
-            elif row['Kit_Mese_Numeric'] > 0:
-                consumo = row['Kit_Mese_Numeric']
+            consumo = row['Kit_Mese_Numeric']
             
             target = math.ceil(consumo * TARGET_MESI)
             is_cal = "CAL" in str(row['Categoria']).upper()
@@ -494,13 +505,11 @@ if not df_master.empty:
         
         st.divider()
         st.write("### 📤 Esporta per Fornitore")
-        
-        # --- MODIFICA COLONNE EXCEL ESPORTATO ---
         df_export = df_c[df_c['Da_Ordinare'] > 0].copy()
         df_export = df_export[['Codice', 'Categoria', 'Descrizione', 'Da_Ordinare', 'Confezione']]
         df_export = df_export.rename(columns={
             'Codice': 'Codice Prodotto', 
-            'Categoria': 'Tipo (RGT/CAL/QC/CONS)',
+            'Categoria': 'Tipo',
             'Da_Ordinare': 'Qta Ordine', 
             'Confezione': 'Conf.to'
         })
@@ -509,7 +518,13 @@ if not df_master.empty:
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
             df_export.to_excel(writer, index=False)
             
-        st.download_button("📥 Scarica Ordine (Excel)", data=buffer.getvalue(), file_name=f"ordine_abbott_{datetime.now().strftime('%Y-%m-%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
+        st.download_button(
+            "📥 Scarica Ordine (Excel)", 
+            data=buffer.getvalue(), 
+            file_name=f"ordine_abbott_{datetime.now().strftime('%Y-%m-%d')}.xlsx", 
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+            type="primary"
+        )
 
     # === TAB 3: SCADENZE ===
     with tab_scadenze:

@@ -134,11 +134,8 @@ def load_master_data():
             return row['Kit_Mese_Numeric']
             
         df['Kit_Mese_Numeric'] = df.apply(calcola_kit_mancanti, axis=1)
-        
-        # FIX SICUREZZA: Trasformiamo eventuali rimanenti "NaN" in 0 per evitare crash in math.ceil
         df['Kit_Mese_Numeric'] = df['Kit_Mese_Numeric'].fillna(0)
         
-        # --- REGOLE DI INCLUSIONE NEL MAGAZZINO ---
         has_valid_consumption = df['Kit_Mese_Numeric'] > 0
         is_cal = df['Categoria'].str.upper().str.contains("CAL")
         is_homocysteine = df['Codice'].str.contains("09P2820", case=False)
@@ -146,9 +143,7 @@ def load_master_data():
         
         df = df[has_valid_consumption | is_cal | is_homocysteine | is_special]
         
-        # Fix Omocisteina
         df.loc[df['Codice'].str.contains("09P2820", case=False), 'Test_Mensili_Reali'] = 1000
-        # Ricalcolo per l'Omocisteina se necessario
         df.loc[df['Codice'].str.contains("09P2820", case=False), 'Kit_Mese_Numeric'] = df.apply(calcola_kit_mancanti, axis=1)
 
         return df
@@ -454,14 +449,20 @@ if not df_master.empty:
         df_c['Giacenza'] = df_c['Codice'].apply(lambda x: st.session_state['magazzino'].get(x, {}).get('qty', 0))
         
         def calcola_stato(row):
-            # DOPPIA RETE DI SICUREZZA: Se consumo è ancora strano/NaN, forziamo a 0
             consumo = row.get('Kit_Mese_Numeric', 0)
             if pd.isna(consumo) or consumo < 0:
                 consumo = 0
             
             target = math.ceil(consumo * TARGET_MESI)
+            
+            # --- NUOVA REGOLA: TARGET MINIMO ASSOLUTO = 2 ---
+            # Impostiamo il target di base almeno a 2 scatole.
+            # In questo modo, se hai in magazzino 1 sola scatola, "da_ord" sarà almeno 1.
+            target = max(target, 2)
+            
             is_cal = "CAL" in str(row['Categoria']).upper()
-            if is_cal: target = max(target, MIN_SCORTA_CAL)
+            if is_cal: 
+                target = max(target, MIN_SCORTA_CAL) # (Questo vince se è un Calibratore, portandolo a 3)
             
             da_ord = max(0, target - row['Giacenza'])
             

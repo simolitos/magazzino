@@ -136,22 +136,33 @@ def load_master_data():
         df['Kit_Mese_Numeric'] = df.apply(calcola_kit_mancanti, axis=1)
         df['Kit_Mese_Numeric'] = df['Kit_Mese_Numeric'].fillna(0)
         
+        # --- REGOLE DI INCLUSIONE NEL MAGAZZINO ---
         has_valid_consumption = df['Kit_Mese_Numeric'] > 0
         is_cal = df['Categoria'].str.upper().str.contains("CAL")
         is_homocysteine = df['Codice'].str.contains("09P2820", case=False)
-        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB", case=False) | df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB", case=False)
+        
+        # Regola Speciale per prodotti senza dati ma richiesti (Vanco, Barbiturici, TRAB e HBsAg Quant)
+        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant", case=False) | \
+                     df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant", case=False) | \
+                     df['Codice'].str.contains("8P0852", case=False)
         
         df = df[has_valid_consumption | is_cal | is_homocysteine | is_special]
         
+        # --- FIX SPECIFICI ---
+        # 1. Omocisteina
         df.loc[df['Codice'].str.contains("09P2820", case=False), 'Test_Mensili_Reali'] = 1000
-        df.loc[df['Codice'].str.contains("09P2820", case=False), 'Kit_Mese_Numeric'] = df.apply(calcola_kit_mancanti, axis=1)
+        # 2. HBsAg Quant (8P0852) - Forza consumo 2 scatole/mese
+        df.loc[df['Codice'].str.contains("8P0852", case=False), 'Kit_Mese_Numeric'] = 2
+        
+        # Ricalcolo finale consumi per eccezioni
+        df['Kit_Mese_Numeric'] = df.apply(calcola_kit_mancanti, axis=1)
 
         return df
     except Exception as e:
         st.error(f"Errore Excel: {e}")
         return pd.DataFrame()
 
-# --- CLOUD ---
+# --- FUNZIONI CLOUD ---
 def fetch_inventory():
     try:
         df_db = conn.read(worksheet="Foglio1", ttl=0)
@@ -455,14 +466,12 @@ if not df_master.empty:
             
             target = math.ceil(consumo * TARGET_MESI)
             
-            # --- NUOVA REGOLA: TARGET MINIMO ASSOLUTO = 2 ---
-            # Impostiamo il target di base almeno a 2 scatole.
-            # In questo modo, se hai in magazzino 1 sola scatola, "da_ord" sarà almeno 1.
+            # Target minimo assoluto = 2 (se ne hai 1, ne ordini un'altra)
             target = max(target, 2)
             
             is_cal = "CAL" in str(row['Categoria']).upper()
             if is_cal: 
-                target = max(target, MIN_SCORTA_CAL) # (Questo vince se è un Calibratore, portandolo a 3)
+                target = max(target, MIN_SCORTA_CAL)
             
             da_ord = max(0, target - row['Giacenza'])
             

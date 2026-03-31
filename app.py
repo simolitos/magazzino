@@ -141,20 +141,22 @@ def load_master_data():
         is_cal = df['Categoria'].str.upper().str.contains("CAL")
         is_homocysteine = df['Codice'].str.contains("09P2820", case=False)
         
-        # Regola Speciale per prodotti senza dati ma richiesti (Vanco, Barbiturici, TRAB e HBsAg Quant)
-        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant", case=False) | \
-                     df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant", case=False) | \
-                     df['Codice'].str.contains("8P0852", case=False)
+        # Regola Speciale per prodotti senza dati o richiesti esplicitamente
+        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina", case=False) | \
+                     df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina", case=False) | \
+                     df['Codice'].str.contains("8P0852|9P4922", case=False)
         
         df = df[has_valid_consumption | is_cal | is_homocysteine | is_special]
         
-        # --- FIX SPECIFICI ---
+        # --- FIX SPECIFICI (FORZATURE CONSUMO) ---
         # 1. Omocisteina
         df.loc[df['Codice'].str.contains("09P2820", case=False), 'Test_Mensili_Reali'] = 1000
         # 2. HBsAg Quant (8P0852) - Forza consumo 2 scatole/mese
         df.loc[df['Codice'].str.contains("8P0852", case=False), 'Kit_Mese_Numeric'] = 2
+        # 3. Tireoglobulina (9P4922) - Forza consumo 4 scatole/mese
+        df.loc[df['Codice'].str.contains("9P4922", case=False), 'Kit_Mese_Numeric'] = 4
         
-        # Ricalcolo finale consumi per eccezioni
+        # Ricalcolo finale dei consumi basato sulle forzature
         df['Kit_Mese_Numeric'] = df.apply(calcola_kit_mancanti, axis=1)
 
         return df
@@ -428,7 +430,7 @@ if not df_master.empty:
                                             da_togliere -= batch['qty']
                                     else:
                                         new_scad.append(batch)
-                                ref['scadenze'] = new_scad
+                            ref['scadenze'] = new_scad
                             tipo_azione_log = "Rettifica"
 
                     if err:

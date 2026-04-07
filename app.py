@@ -120,14 +120,13 @@ def load_master_data():
 
         df['Fabbisogno_Kit_Mese_Stimato'] = df['Fabbisogno_Kit_Mese_Stimato'].apply(clean_custom_values)
         
-        # --- FORZATURE PREVENTIVE (Prima che l'app li cestini) ---
-        # Inserisco i valori forzati direttamente nella colonna grezza,
-        # cercando i codici sia con il trattino che senza per sicurezza assoluta
+        # --- FORZATURE PREVENTIVE UNIFICATE ---
+        # Impostiamo i consumi corretti prima di fare qualsiasi calcolo
         df.loc[df['Codice'].str.contains("8P0852|8P08-52", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 2
         df.loc[df['Codice'].str.contains("9P4922|9P49-22", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 4
         df.loc[df['Codice'].str.contains("7P5320|7P53-20", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 2
         
-        # Ora converto in numero pulito
+        # Ora converto in numero
         df['Kit_Mese_Numeric'] = pd.to_numeric(df['Fabbisogno_Kit_Mese_Stimato'], errors='coerce')
         
         for col in ['Test_Mensili_Reali', 'Test_per_Scatola']:
@@ -152,12 +151,10 @@ def load_master_data():
         has_valid_consumption = df['Kit_Mese_Numeric'] > 0
         is_cal = df['Categoria'].str.upper().str.contains("CAL", na=False)
         
-        # Paracadute per i prodotti speciali (Cerca sia nel nome che nel codice)
         is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina", case=False, na=False) | \
                      df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina", case=False, na=False) | \
                      df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820", case=False, na=False)
         
-        # Filtro applicato
         df = df[has_valid_consumption | is_cal | is_special]
 
         return df
@@ -469,7 +466,7 @@ if not df_master.empty:
             
             target = math.ceil(consumo * TARGET_MESI)
             
-            # Target minimo assoluto = 2 (se ne hai 1, ne ordini un'altra)
+            # Target minimo assoluto = 2
             target = max(target, 2)
             
             is_cal = "CAL" in str(row['Categoria']).upper()

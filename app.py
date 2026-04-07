@@ -142,9 +142,9 @@ def load_master_data():
         is_homocysteine = df['Codice'].str.contains("09P2820", case=False)
         
         # Regola Speciale per prodotti senza dati o richiesti esplicitamente
-        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina", case=False) | \
-                     df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina", case=False) | \
-                     df['Codice'].str.contains("8P0852|9P4922", case=False)
+        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT", case=False) | \
+                     df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT", case=False) | \
+                     df['Codice'].str.contains("8P0852|9P4922|7P5320", case=False)
         
         df = df[has_valid_consumption | is_cal | is_homocysteine | is_special]
         
@@ -155,6 +155,8 @@ def load_master_data():
         df.loc[df['Codice'].str.contains("8P0852", case=False), 'Kit_Mese_Numeric'] = 2
         # 3. Tireoglobulina (9P4922) - Forza consumo 4 scatole/mese
         df.loc[df['Codice'].str.contains("9P4922", case=False), 'Kit_Mese_Numeric'] = 4
+        # 4. ICT SAMPLE DILUENT (7P5320) - Forza consumo 5 scatole/mese
+        df.loc[df['Codice'].str.contains("7P5320", case=False), 'Kit_Mese_Numeric'] = 5
         
         # Ricalcolo finale dei consumi basato sulle forzature
         df['Kit_Mese_Numeric'] = df.apply(calcola_kit_mancanti, axis=1)
@@ -431,7 +433,7 @@ if not df_master.empty:
                                     else:
                                         new_scad.append(batch)
                             ref['scadenze'] = new_scad
-                            tipo_azione_log = "Rettifica"
+                        tipo_azione_log = "Rettifica"
 
                     if err:
                         loader_placeholder.empty()

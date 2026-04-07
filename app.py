@@ -125,7 +125,7 @@ def load_master_data():
         # cercando i codici sia con il trattino che senza per sicurezza assoluta
         df.loc[df['Codice'].str.contains("8P0852|8P08-52", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 2
         df.loc[df['Codice'].str.contains("9P4922|9P49-22", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 4
-        df.loc[df['Codice'].str.contains("7P5320|7P53-20", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 5
+        df.loc[df['Codice'].str.contains("7P5320|7P53-20", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 2
         
         # Ora converto in numero pulito
         df['Kit_Mese_Numeric'] = pd.to_numeric(df['Fabbisogno_Kit_Mese_Stimato'], errors='coerce')
@@ -469,7 +469,7 @@ if not df_master.empty:
             
             target = math.ceil(consumo * TARGET_MESI)
             
-            # Target minimo assoluto = 2
+            # Target minimo assoluto = 2 (se ne hai 1, ne ordini un'altra)
             target = max(target, 2)
             
             is_cal = "CAL" in str(row['Categoria']).upper()

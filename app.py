@@ -119,6 +119,15 @@ def load_master_data():
             return val
 
         df['Fabbisogno_Kit_Mese_Stimato'] = df['Fabbisogno_Kit_Mese_Stimato'].apply(clean_custom_values)
+        
+        # --- FORZATURE PREVENTIVE (Prima che l'app li cestini) ---
+        # Inserisco i valori forzati direttamente nella colonna grezza,
+        # cercando i codici sia con il trattino che senza per sicurezza assoluta
+        df.loc[df['Codice'].str.contains("8P0852|8P08-52", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 2
+        df.loc[df['Codice'].str.contains("9P4922|9P49-22", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 4
+        df.loc[df['Codice'].str.contains("7P5320|7P53-20", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 5
+        
+        # Ora converto in numero pulito
         df['Kit_Mese_Numeric'] = pd.to_numeric(df['Fabbisogno_Kit_Mese_Stimato'], errors='coerce')
         
         for col in ['Test_Mensili_Reali', 'Test_per_Scatola']:
@@ -126,6 +135,9 @@ def load_master_data():
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             else:
                 df[col] = 0
+                
+        # Forzatura Test Reali per Omocisteina
+        df.loc[df['Codice'].str.contains("09P2820|09P28-20", case=False, na=False), 'Test_Mensili_Reali'] = 1000
                 
         def calcola_kit_mancanti(row):
             if pd.isna(row['Kit_Mese_Numeric']) or row['Kit_Mese_Numeric'] == 0:
@@ -138,28 +150,15 @@ def load_master_data():
         
         # --- REGOLE DI INCLUSIONE NEL MAGAZZINO ---
         has_valid_consumption = df['Kit_Mese_Numeric'] > 0
-        is_cal = df['Categoria'].str.upper().str.contains("CAL")
-        is_homocysteine = df['Codice'].str.contains("09P2820", case=False)
+        is_cal = df['Categoria'].str.upper().str.contains("CAL", na=False)
         
-        # Regola Speciale per prodotti senza dati o richiesti esplicitamente
-        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT", case=False) | \
-                     df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT", case=False) | \
-                     df['Codice'].str.contains("8P0852|9P4922|7P5320", case=False)
+        # Paracadute per i prodotti speciali (Cerca sia nel nome che nel codice)
+        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina", case=False, na=False) | \
+                     df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina", case=False, na=False) | \
+                     df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820", case=False, na=False)
         
-        df = df[has_valid_consumption | is_cal | is_homocysteine | is_special]
-        
-        # --- FIX SPECIFICI (FORZATURE CONSUMO) ---
-        # 1. Omocisteina
-        df.loc[df['Codice'].str.contains("09P2820", case=False), 'Test_Mensili_Reali'] = 1000
-        # 2. HBsAg Quant (8P0852) - Forza consumo 2 scatole/mese
-        df.loc[df['Codice'].str.contains("8P0852", case=False), 'Kit_Mese_Numeric'] = 2
-        # 3. Tireoglobulina (9P4922) - Forza consumo 4 scatole/mese
-        df.loc[df['Codice'].str.contains("9P4922", case=False), 'Kit_Mese_Numeric'] = 4
-        # 4. ICT SAMPLE DILUENT (7P5320) - Forza consumo 5 scatole/mese
-        df.loc[df['Codice'].str.contains("7P5320", case=False), 'Kit_Mese_Numeric'] = 5
-        
-        # Ricalcolo finale dei consumi basato sulle forzature
-        df['Kit_Mese_Numeric'] = df.apply(calcola_kit_mancanti, axis=1)
+        # Filtro applicato
+        df = df[has_valid_consumption | is_cal | is_special]
 
         return df
     except Exception as e:
@@ -432,8 +431,8 @@ if not df_master.empty:
                                             da_togliere -= batch['qty']
                                     else:
                                         new_scad.append(batch)
-                            ref['scadenze'] = new_scad
-                        tipo_azione_log = "Rettifica"
+                                ref['scadenze'] = new_scad
+                            tipo_azione_log = "Rettifica"
 
                     if err:
                         loader_placeholder.empty()
@@ -470,7 +469,7 @@ if not df_master.empty:
             
             target = math.ceil(consumo * TARGET_MESI)
             
-            # Target minimo assoluto = 2 (se ne hai 1, ne ordini un'altra)
+            # Target minimo assoluto = 2
             target = max(target, 2)
             
             is_cal = "CAL" in str(row['Categoria']).upper()

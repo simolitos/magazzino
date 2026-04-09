@@ -125,6 +125,7 @@ def load_master_data():
         df.loc[df['Codice'].str.contains("8P0852|8P08-52", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 2
         df.loc[df['Codice'].str.contains("9P4922|9P49-22", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 4
         df.loc[df['Codice'].str.contains("7P5320|7P53-20", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 2
+        df.loc[df['Codice'].str.contains("06Q1461|06Q14-61", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 9  # Aggiornato a 9
         
         # Ora converto in numero
         df['Kit_Mese_Numeric'] = pd.to_numeric(df['Fabbisogno_Kit_Mese_Stimato'], errors='coerce')
@@ -151,9 +152,9 @@ def load_master_data():
         has_valid_consumption = df['Kit_Mese_Numeric'] > 0
         is_cal = df['Categoria'].str.upper().str.contains("CAL", na=False)
         
-        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina", case=False, na=False) | \
-                     df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina", case=False, na=False) | \
-                     df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820", case=False, na=False)
+        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES", case=False, na=False) | \
+                     df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES", case=False, na=False) | \
+                     df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820|06Q1461", case=False, na=False)
         
         df = df[has_valid_consumption | is_cal | is_special]
 

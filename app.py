@@ -125,7 +125,6 @@ def load_master_data():
         df.loc[df['Codice'].str.contains("9P4922|9P49-22", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 4
         df.loc[df['Codice'].str.contains("7P5320|7P53-20", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 2
         df.loc[df['Codice'].str.contains("06Q1461|06Q14-61", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 9
-        # Nuove forzature consumabili
         df.loc[df['Codice'].str.contains("1R3801|1R38-01", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 6
         df.loc[df['Codice'].str.contains("6P1401|6P14-01", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 45
         df.loc[df['Codice'].str.contains("8P9870|8P98-70", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 1
@@ -153,10 +152,10 @@ def load_master_data():
         has_valid_consumption = df['Kit_Mese_Numeric'] > 0
         is_cal = df['Categoria'].str.upper().str.contains("CAL", na=False)
         
-        # Paracadute per i prodotti speciali
-        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions", case=False, na=False) | \
-                     df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions", case=False, na=False) | \
-                     df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820|06Q1461|1R3801|6P1401|8P9870", case=False, na=False)
+        # Paracadute per i prodotti speciali (Inclusi Mioglobina e Procalcitonina)
+        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina", case=False, na=False) | \
+                     df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina", case=False, na=False) | \
+                     df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820|06Q1461|1R3801|6P1401|8P9870|4V3730|1R1822", case=False, na=False)
         
         df = df[has_valid_consumption | is_cal | is_special]
 
@@ -431,7 +430,7 @@ if not df_master.empty:
                                             da_togliere -= batch['qty']
                                     else:
                                         new_scad.append(batch)
-                                ref['scadenze'] = new_scad
+                            ref['scadenze'] = new_scad
                             tipo_azione_log = "Rettifica"
 
                     if err:
@@ -463,12 +462,21 @@ if not df_master.empty:
         df_c['Giacenza'] = df_c['Codice'].apply(lambda x: st.session_state['magazzino'].get(x, {}).get('qty', 0))
         
         def calcola_stato(row):
+            cod_pulito = str(row['Codice']).upper().replace("-", "").strip()
             consumo = row.get('Kit_Mese_Numeric', 0)
             if pd.isna(consumo) or consumo < 0:
                 consumo = 0
             
+            # Calcolo target base (1.25 mesi)
             target = math.ceil(consumo * TARGET_MESI)
             
+            # --- AGGIUNTA EXTRA SPECIFICA ---
+            if "4V3730" in cod_pulito: # Mioglobina
+                target += 1
+            elif "1R1822" in cod_pulito: # Procalcitonina
+                target += 2
+            
+            # Target minimo assoluto = 2
             target = max(target, 2)
             
             is_cal = "CAL" in str(row['Categoria']).upper()

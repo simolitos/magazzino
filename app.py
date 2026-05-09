@@ -152,7 +152,7 @@ def load_master_data():
         has_valid_consumption = df['Kit_Mese_Numeric'] > 0
         is_cal = df['Categoria'].str.upper().str.contains("CAL", na=False)
         
-        # Paracadute per i prodotti speciali
+        # Paracadute per i prodotti speciali (Inclusi Mioglobina e Procalcitonina)
         is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina", case=False, na=False) | \
                      df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina", case=False, na=False) | \
                      df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820|06Q1461|1R3801|6P1401|8P9870|4V3730|1R1822", case=False, na=False)
@@ -176,7 +176,15 @@ def fetch_inventory():
                 qty = row['Quantita']
                 try: scadenze = json.loads(row['Scadenze_JSON'])
                 except: scadenze = []
-                magazzino[cod] = {'qty': qty, 'scadenze': scadenze}
+                
+                # Novità: Recuperiamo l'ultimo aggiornamento del singolo prodotto
+                if 'Ultima_Modifica' in df_db.columns:
+                    um = str(row['Ultima_Modifica'])
+                    if um == 'nan' or not um.strip(): um = '2000-01-01 00:00:00'
+                else:
+                    um = '2000-01-01 00:00:00'
+                    
+                magazzino[cod] = {'qty': qty, 'scadenze': scadenze, 'ultima_modifica': um}
         return magazzino
     except: return {}
 
@@ -184,11 +192,13 @@ def update_inventory(magazzino_dict):
     data_list = []
     for cod, info in magazzino_dict.items():
         if info['qty'] > 0: 
+            # Novità: Salviamo l'orario specifico di quel prodotto, non l'orario generale
+            um = info.get('ultima_modifica', '2000-01-01 00:00:00')
             data_list.append({
                 "Codice": cod,
                 "Quantita": info['qty'],
                 "Scadenze_JSON": json.dumps(info['scadenze']),
-                "Ultima_Modifica": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                "Ultima_Modifica": um
             })
     
     if not data_list:
@@ -208,7 +218,7 @@ def manage_log_cloud(azione, prodotto_nome, qta):
             "Prodotto": prodotto_nome
         }
         
-        # OTTIMIZZAZIONE: Usiamo il log già presente in session_state, evitiamo di rileggerlo da Google!
+        # Ottimizzazione velocità: Usiamo la memoria locale invece di scaricare tutto da Google
         if 'cloud_log' in st.session_state and not st.session_state['cloud_log'].empty:
             df_log = st.session_state['cloud_log'].copy()
         else:
@@ -322,7 +332,8 @@ if 'magazzino' not in st.session_state:
 
 if not df_master.empty:
     
-    tab_mov, tab_ordini, tab_scadenze = st.tabs(["⚡ OPERAZIONI", "🛒 ORDINI & ANALISI", "🗓️ SCADENZE"])
+    # NOVITÀ: Nuova Tab per i controlli a 30 giorni
+    tab_mov, tab_ordini, tab_scadenze, tab_controlli = st.tabs(["⚡ OPERAZIONI", "🛒 ORDINI & ANALISI", "🗓️ SCADENZE", "⏳ DA VERIFICARE"])
 
     # === TAB 1: OPERAZIONI ===
     with tab_mov:
@@ -382,7 +393,7 @@ if not df_master.empty:
                     """, unsafe_allow_html=True)
                     
                     if codice not in st.session_state['magazzino']:
-                        st.session_state['magazzino'][codice] = {'qty': 0, 'scadenze': []}
+                        st.session_state['magazzino'][codice] = {'qty': 0, 'scadenze': [], 'ultima_modifica': '2000-01-01 00:00:00'}
                     
                     ref = st.session_state['magazzino'][codice]
                     tipo_azione_log = ""
@@ -416,7 +427,10 @@ if not df_master.empty:
 
                     elif "RETTIFICA" in azione:
                         diff = qty_input - ref['qty']
-                        if diff == 0: err = True
+                        # NOVITÀ: Se la giacenza inserita è uguale, è una "Conferma" e non genera errore
+                        if diff == 0: 
+                            err = False
+                            tipo_azione_log = "Conferma Giacenza"
                         else:
                             ref['qty'] = qty_input
                             if diff > 0: ref['scadenze'].append({'display': 'MANUALE', 'sort': '9999-12', 'qty': diff})
@@ -439,16 +453,25 @@ if not df_master.empty:
                     if err:
                         loader_placeholder.empty()
                         if "PRELIEVO" in azione: st.error("Quantità insufficiente!")
-                        else: st.warning("Nessuna modifica.")
+                        else: st.warning("Azione non valida.")
                     else:
+                        # Aggiorniamo il timestamp specifico del prodotto
+                        ref['ultima_modifica'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        
                         update_inventory(st.session_state['magazzino'])
+                        
+                        # Formattazione per il log visivo
+                        qta_str = str(qty_input)
+                        if "RETTIFICA" in azione:
+                            qta_str = f"Conferma OK: {qty_input}" if tipo_azione_log == "Conferma Giacenza" else f"-> {qty_input}"
+                        
                         st.session_state['cloud_log'] = manage_log_cloud(
                             tipo_azione_log, 
                             row_art['Descrizione'], 
-                            qty_input if "RETTIFICA" not in azione else f"-> {qty_input}"
+                            qta_str
                         )
                         loader_placeholder.empty()
-                        st.toast(f"✅ Salvato: {azione} eseguita!", icon="☁️")
+                        st.toast(f"✅ Salvato: {tipo_azione_log} eseguita!", icon="☁️")
                         time.sleep(1) 
                         st.rerun()
         else:
@@ -470,16 +493,11 @@ if not df_master.empty:
             if pd.isna(consumo) or consumo < 0:
                 consumo = 0
             
-            # Calcolo target base (1.25 mesi)
             target = math.ceil(consumo * TARGET_MESI)
             
-            # --- AGGIUNTA EXTRA SPECIFICA ---
-            if "4V3730" in cod_pulito: # Mioglobina
-                target += 1
-            elif "1R1822" in cod_pulito: # Procalcitonina
-                target += 2
+            if "4V3730" in cod_pulito: target += 1
+            elif "1R1822" in cod_pulito: target += 2
             
-            # Target minimo assoluto = 2
             target = max(target, 2)
             
             is_cal = "CAL" in str(row['Categoria']).upper()
@@ -574,6 +592,71 @@ if not df_master.empty:
             st.dataframe(pd.DataFrame(scad_list).sort_values(by='Scadenza'), use_container_width=True, hide_index=True)
         else:
             st.info("Nessuna scadenza inserita.")
+
+    # === TAB 4: CONTROLLI (NOVITÀ) ===
+    with tab_controlli:
+        st.markdown("### ⏳ Allarme Giacenze Latenti (> 30 Giorni)")
+        st.write("Questa sezione ti mostra i prodotti che non subiscono variazioni (o conferme) da oltre 30 giorni. Ti aiuta a scovare eventuali sviste durante l'inventario fisico.")
+        
+        da_verificare = []
+        now_dt = datetime.now()
+        
+        for _, row in df_master.iterrows():
+            cod = str(row['Codice'])
+            nome = str(row['Descrizione'])
+            cat = str(row['Categoria'])
+            
+            info = st.session_state['magazzino'].get(cod, {})
+            qty = info.get('qty', 0)
+            um_str = info.get('ultima_modifica', '2000-01-01 00:00:00')
+            
+            if um_str.startswith('2000-01-01'):
+                days_passed = 999
+                um_display = "Mai Verificato"
+            else:
+                try:
+                    um_dt = datetime.strptime(um_str, "%Y-%m-%d %H:%M:%S")
+                    days_passed = (now_dt - um_dt).days
+                    um_display = um_dt.strftime("%d/%m/%Y")
+                except:
+                    days_passed = 999
+                    um_display = "Data Errata"
+                    
+            if days_passed >= 30:
+                da_verificare.append({
+                    "Stato": "🚨 URGENTE" if qty > 0 else "⚠️ DA CONTROLLARE",
+                    "Codice": cod,
+                    "Prodotto": nome,
+                    "Categoria": cat,
+                    "Giacenza a Sistema": qty,
+                    "Ultima Modifica": um_display,
+                    "Giorni Trascorsi": days_passed if days_passed != 999 else "♾️"
+                })
+                
+        if da_verificare:
+            df_ver = pd.DataFrame(da_verificare)
+            df_ver['sort_val'] = df_ver['Giorni Trascorsi'].apply(lambda x: 9999 if x == '♾️' else x)
+            df_ver = df_ver.sort_values(by=['Stato', 'sort_val'], ascending=[True, False]).drop(columns=['sort_val'])
+            
+            st.warning(f"⚠️ Ci sono {len(df_ver)} prodotti fermi da oltre 30 giorni!")
+            st.dataframe(
+                df_ver, 
+                use_container_width=True, 
+                hide_index=True,
+                column_config={
+                    "Stato": st.column_config.TextColumn("Stato", width="small"),
+                    "Codice": st.column_config.TextColumn("Codice", width="small"),
+                    "Prodotto": st.column_config.TextColumn("Prodotto", width="large"),
+                    "Categoria": st.column_config.TextColumn("Tipo", width="small"),
+                    "Giacenza a Sistema": st.column_config.NumberColumn("Giacenza", width="small"),
+                    "Ultima Modifica": st.column_config.TextColumn("Ultima Modifica", width="medium"),
+                    "Giorni Trascorsi": st.column_config.TextColumn("Giorni", width="small")
+                }
+            )
+            
+            st.info("💡 **Come rimuovere l'allarme:** Vai in '⚡ OPERAZIONI', seleziona il prodotto e scegli '🔧 RETTIFICA (=)'. Inserisci la quantità reale (anche se è uguale a quella già a sistema). L'app capirà che hai fatto una 'Conferma' e azzererà questo contatore!")
+        else:
+            st.success("🎉 Tutto aggiornato! Nessun prodotto è fermo da oltre 30 giorni.")
 
 else:
     st.error("Errore Dati Master.")

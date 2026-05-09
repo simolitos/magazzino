@@ -328,7 +328,6 @@ if 'magazzino' not in st.session_state:
 
 if not df_master.empty:
     
-    # --- NOVITÀ: NUOVO ORDINE DELLE SCHEDE ---
     tab_mov, tab_ordini, tab_controlli, tab_scadenze = st.tabs(["⚡ OPERAZIONI", "🛒 ORDINI & ANALISI", "⏳ DA VERIFICARE", "🗓️ SCADENZE"])
 
     # === TAB 1: OPERAZIONI ===
@@ -467,7 +466,7 @@ if not df_master.empty:
         df_c[['Stato', 'Target', 'Da_Ordinare', 'Days_Left']] = df_c.apply(calcola_stato, axis=1)
         st.dataframe(df_c.sort_values(by=['Da_Ordinare'], ascending=False)[['Stato', 'Categoria', 'Assay_Name', 'Descrizione', 'Codice', 'Giacenza', 'Target', 'Days_Left', 'Da_Ordinare']], use_container_width=True, hide_index=True)
 
-    # === TAB 3: DA VERIFICARE (SPOSTATA) ===
+    # === TAB 3: DA VERIFICARE ===
     with tab_controlli:
         st.markdown("### ⏳ Allarme Giacenze Latenti (> 30 Giorni)")
         da_verificare = []
@@ -482,18 +481,50 @@ if not df_master.empty:
         if da_verificare: st.dataframe(pd.DataFrame(da_verificare).sort_values(by='Giorni', ascending=False), use_container_width=True, hide_index=True)
         else: st.success("🎉 Tutto aggiornato!")
 
-    # === TAB 4: SCADENZE ===
+    # === TAB 4: SCADENZE (DIVISA IN GRUPPI) ===
     with tab_scadenze:
-        scad_list = []
+        st.markdown("### 🗓️ Monitoraggio Scadenze Lotti")
+        
+        cal_list = []
+        rgt_list = []
         today = datetime.now().strftime("%Y-%m")
         limit = (datetime.now() + pd.DateOffset(months=3)).strftime("%Y-%m")
+        
         for cod, data in st.session_state['magazzino'].items():
+            # Trova info prodotto dal master
+            try: 
+                master_row = df_master[df_master['Codice']==cod].iloc[0]
+                nome = master_row['Descrizione']
+                categoria = str(master_row['Categoria']).upper()
+            except: 
+                nome = cod
+                categoria = ""
+                
             for batch in data['scadenze']:
                 s = "☠️ SCADUTO" if batch['sort'] < today else ("⚠️ PRESTO" if batch['sort'] <= limit else "🟢 OK")
-                try: nome = df_master[df_master['Codice']==cod]['Descrizione'].iloc[0]
-                except: nome = cod
-                scad_list.append({"Stato": s, "Prodotto": nome, "Qta": batch['qty'], "Scadenza": batch['display']})
-        if scad_list: st.dataframe(pd.DataFrame(scad_list).sort_values(by='Scadenza'), use_container_width=True, hide_index=True)
-        else: st.info("Nessuna scadenza.")
+                item = {"Stato": s, "Prodotto": nome, "Qta": batch['qty'], "Scadenza": batch['display']}
+                
+                # Smistamento nei due gruppi
+                if "CAL" in categoria:
+                    cal_list.append(item)
+                else:
+                    rgt_list.append(item)
+        
+        # --- Visualizzazione Gruppo 1: CALIBRATORI ---
+        if cal_list:
+            st.subheader("🧪 CALIBRATORI")
+            df_cal = pd.DataFrame(cal_list).sort_values(by='Scadenza')
+            st.dataframe(df_cal, use_container_width=True, hide_index=True)
+        
+        if cal_list and rgt_list: st.divider()
+
+        # --- Visualizzazione Gruppo 2: REAGENTI E ALTRO ---
+        if rgt_list:
+            st.subheader("📦 REAGENTI E CONSUMABILI")
+            df_rgt = pd.DataFrame(rgt_list).sort_values(by='Scadenza')
+            st.dataframe(df_rgt, use_container_width=True, hide_index=True)
+            
+        if not cal_list and not rgt_list:
+            st.info("Nessuna scadenza inserita in magazzino.")
 else:
     st.error("Errore Dati Master.")

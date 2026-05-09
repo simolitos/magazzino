@@ -152,7 +152,6 @@ def load_master_data():
         has_valid_consumption = df['Kit_Mese_Numeric'] > 0
         is_cal = df['Categoria'].str.upper().str.contains("CAL", na=False)
         
-        # Paracadute per i prodotti speciali (Inclusi Mioglobina e Procalcitonina)
         is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina", case=False, na=False) | \
                      df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina", case=False, na=False) | \
                      df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820|06Q1461|1R3801|6P1401|8P9870|4V3730|1R1822", case=False, na=False)
@@ -177,7 +176,6 @@ def fetch_inventory():
                 try: scadenze = json.loads(row['Scadenze_JSON'])
                 except: scadenze = []
                 
-                # Novità: Recuperiamo l'ultimo aggiornamento del singolo prodotto
                 if 'Ultima_Modifica' in df_db.columns:
                     um = str(row['Ultima_Modifica'])
                     if um == 'nan' or not um.strip(): um = '2000-01-01 00:00:00'
@@ -192,7 +190,6 @@ def update_inventory(magazzino_dict):
     data_list = []
     for cod, info in magazzino_dict.items():
         if info['qty'] > 0: 
-            # Novità: Salviamo l'orario specifico di quel prodotto, non l'orario generale
             um = info.get('ultima_modifica', '2000-01-01 00:00:00')
             data_list.append({
                 "Codice": cod,
@@ -218,7 +215,6 @@ def manage_log_cloud(azione, prodotto_nome, qta):
             "Prodotto": prodotto_nome
         }
         
-        # Ottimizzazione velocità: Usiamo la memoria locale invece di scaricare tutto da Google
         if 'cloud_log' in st.session_state and not st.session_state['cloud_log'].empty:
             df_log = st.session_state['cloud_log'].copy()
         else:
@@ -332,8 +328,8 @@ if 'magazzino' not in st.session_state:
 
 if not df_master.empty:
     
-    # NOVITÀ: Nuova Tab per i controlli a 30 giorni
-    tab_mov, tab_ordini, tab_scadenze, tab_controlli = st.tabs(["⚡ OPERAZIONI", "🛒 ORDINI & ANALISI", "🗓️ SCADENZE", "⏳ DA VERIFICARE"])
+    # --- NOVITÀ: NUOVO ORDINE DELLE SCHEDE ---
+    tab_mov, tab_ordini, tab_controlli, tab_scadenze = st.tabs(["⚡ OPERAZIONI", "🛒 ORDINI & ANALISI", "⏳ DA VERIFICARE", "🗓️ SCADENZE"])
 
     # === TAB 1: OPERAZIONI ===
     with tab_mov:
@@ -348,12 +344,7 @@ if not df_master.empty:
             
             opzioni = df_master.apply(get_label, axis=1).tolist()
             
-            scelta = st.selectbox(
-                "Cerca Prodotto (Nome, Codice, Assay):", 
-                opzioni,
-                index=None,
-                placeholder="Digita per cercare..."
-            )
+            scelta = st.selectbox("Cerca Prodotto (Nome, Codice, Assay):", opzioni, index=None, placeholder="Digita per cercare...")
             
         if scelta:
             df_master['Menu_Label'] = df_master.apply(get_label, axis=1)
@@ -385,12 +376,7 @@ if not df_master.empty:
 
                 if st.button("🚀 ESEGUI OPERAZIONE", type="primary", use_container_width=True):
                     loader_placeholder = st.empty()
-                    loader_placeholder.markdown("""
-                        <div id="custom-loader">
-                            <div class="spinner"></div>
-                            <div class="loading-text">Salvataggio in Cloud...</div>
-                        </div>
-                    """, unsafe_allow_html=True)
+                    loader_placeholder.markdown("""<div id="custom-loader"><div class="spinner"></div><div class="loading-text">Salvataggio in Cloud...</div></div>""", unsafe_allow_html=True)
                     
                     if codice not in st.session_state['magazzino']:
                         st.session_state['magazzino'][codice] = {'qty': 0, 'scadenze': [], 'ultima_modifica': '2000-01-01 00:00:00'}
@@ -404,10 +390,8 @@ if not df_master.empty:
                         ref['scadenze'].append({'display': scad_display, 'sort': scad_sort, 'qty': qty_input})
                         ref['scadenze'].sort(key=lambda x: x['sort'])
                         tipo_azione_log = "Carico"
-
                     elif "PRELIEVO" in azione:
-                        if ref['qty'] < qty_input:
-                            err = True
+                        if ref['qty'] < qty_input: err = True
                         else:
                             ref['qty'] -= qty_input
                             rem = qty_input
@@ -418,16 +402,12 @@ if not df_master.empty:
                                         batch['qty'] -= rem
                                         rem = 0
                                         new_scad.append(batch)
-                                    else:
-                                        rem -= batch['qty']
-                                else:
-                                    new_scad.append(batch)
+                                    else: rem -= batch['qty']
+                                else: new_scad.append(batch)
                             ref['scadenze'] = new_scad
                             tipo_azione_log = "Prelievo"
-
                     elif "RETTIFICA" in azione:
                         diff = qty_input - ref['qty']
-                        # NOVITÀ: Se la giacenza inserita è uguale, è una "Conferma" e non genera errore
                         if diff == 0: 
                             err = False
                             tipo_azione_log = "Conferma Giacenza"
@@ -443,220 +423,77 @@ if not df_master.empty:
                                             batch['qty'] -= da_togliere
                                             da_togliere = 0
                                             new_scad.append(batch)
-                                        else:
-                                            da_togliere -= batch['qty']
-                                    else:
-                                        new_scad.append(batch)
+                                        else: da_togliere -= batch['qty']
+                                    else: new_scad.append(batch)
                                 ref['scadenze'] = new_scad
                             tipo_azione_log = "Rettifica"
 
                     if err:
                         loader_placeholder.empty()
-                        if "PRELIEVO" in azione: st.error("Quantità insufficiente!")
-                        else: st.warning("Azione non valida.")
+                        st.error("Quantità insufficiente!")
                     else:
-                        # Aggiorniamo il timestamp specifico del prodotto
                         ref['ultima_modifica'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        
                         update_inventory(st.session_state['magazzino'])
-                        
-                        # Formattazione per il log visivo
                         qta_str = str(qty_input)
-                        if "RETTIFICA" in azione:
-                            qta_str = f"Conferma OK: {qty_input}" if tipo_azione_log == "Conferma Giacenza" else f"-> {qty_input}"
-                        
-                        st.session_state['cloud_log'] = manage_log_cloud(
-                            tipo_azione_log, 
-                            row_art['Descrizione'], 
-                            qta_str
-                        )
+                        if "RETTIFICA" in azione: qta_str = f"OK: {qty_input}" if tipo_azione_log == "Conferma" else f"-> {qty_input}"
+                        st.session_state['cloud_log'] = manage_log_cloud(tipo_azione_log, row_art['Descrizione'], qta_str)
                         loader_placeholder.empty()
-                        st.toast(f"✅ Salvato: {tipo_azione_log} eseguita!", icon="☁️")
-                        time.sleep(1) 
+                        st.toast(f"✅ Salvato!", icon="☁️")
+                        time.sleep(0.5) 
                         st.rerun()
-        else:
-            st.info("👆 Seleziona un prodotto dalla barra di ricerca per iniziare le operazioni.")
 
     # === TAB 2: ORDINI ===
     with tab_ordini:
         st.markdown("### 🚦 Analisi Fabbisogno (1.25 Mesi)")
-        c_search, c_filtro = st.columns([2,1])
-        term = c_search.text_input("🔍 Cerca (Nome, Codice, Assay)...", placeholder="Scrivi qui...")
-        filtro = c_filtro.multiselect("Filtra Stato:", ["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE", "🟢 OK"], default=["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE"])
-        
         df_c = df_master.copy()
         df_c['Giacenza'] = df_c['Codice'].apply(lambda x: st.session_state['magazzino'].get(x, {}).get('qty', 0))
         
         def calcola_stato(row):
             cod_pulito = str(row['Codice']).upper().replace("-", "").strip()
             consumo = row.get('Kit_Mese_Numeric', 0)
-            if pd.isna(consumo) or consumo < 0:
-                consumo = 0
-            
             target = math.ceil(consumo * TARGET_MESI)
-            
             if "4V3730" in cod_pulito: target += 1
             elif "1R1822" in cod_pulito: target += 2
-            
             target = max(target, 2)
-            
-            is_cal = "CAL" in str(row['Categoria']).upper()
-            if is_cal: 
-                target = max(target, MIN_SCORTA_CAL)
-            
+            if "CAL" in str(row['Categoria']).upper(): target = max(target, MIN_SCORTA_CAL)
             da_ord = max(0, target - row['Giacenza'])
-            
-            copertura_giorni = None
-            if consumo > 0 and row['Giacenza'] > 0:
-                consumo_giornaliero = consumo / 30
-                days = int(row['Giacenza'] / consumo_giornaliero)
-                copertura_giorni = days
-            
+            days_left = int(row['Giacenza'] / (consumo/30)) if consumo > 0 and row['Giacenza'] > 0 else None
             stato = "🟢 OK"
-            if is_cal and row['Giacenza'] < MIN_SCORTA_CAL: stato = "🔴 SOTTO MINIMO"
+            if "CAL" in str(row['Categoria']).upper() and row['Giacenza'] < MIN_SCORTA_CAL: stato = "🔴 SOTTO MINIMO"
             elif row['Giacenza'] == 0: stato = "🔴 ESAURITO"
             elif da_ord > 0: stato = "🟡 DA ORDINARE"
-            
-            return pd.Series([stato, target, da_ord, copertura_giorni])
+            return pd.Series([stato, target, da_ord, days_left])
 
         df_c[['Stato', 'Target', 'Da_Ordinare', 'Days_Left']] = df_c.apply(calcola_stato, axis=1)
-        
-        df_view = df_c.copy()
-        if filtro: df_view = df_view[df_view['Stato'].isin(filtro)]
-        if term: 
-            df_view = df_view[
-                df_view['Descrizione'].str.contains(term, case=False, na=False) | 
-                df_view['Codice'].str.contains(term, case=False, na=False) |
-                df_view['Categoria'].str.contains(term, case=False, na=False) |
-                df_view['Assay_Name'].str.contains(term, case=False, na=False)
-            ]
-        df_view = df_view.sort_values(by=['Da_Ordinare'], ascending=False)
-        
-        st.dataframe(
-            df_view[['Stato', 'Categoria', 'Assay_Name', 'Descrizione', 'Codice', 'Giacenza', 'Target', 'Days_Left', 'Da_Ordinare']],
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Stato": st.column_config.TextColumn("Stato", width="small"),
-                "Categoria": st.column_config.TextColumn("Tipo", width="small"),
-                "Assay_Name": st.column_config.TextColumn("Assay", width="medium"),
-                "Descrizione": st.column_config.TextColumn("Prodotto", width="large"),
-                "Codice": st.column_config.TextColumn("LN Abbott", width="medium"),
-                "Target": st.column_config.NumberColumn("Target"),
-                "Days_Left": st.column_config.NumberColumn("Copertura", format="%d gg", help="Giorni di autonomia stimati"),
-                "Da_Ordinare": st.column_config.NumberColumn("🛒 ORDINA")
-            }
-        )
-        
-        st.divider()
-        st.write("### 📤 Esporta per Fornitore")
-        df_export = df_c[df_c['Da_Ordinare'] > 0].copy()
-        df_export = df_export[['Codice', 'Categoria', 'Descrizione', 'Da_Ordinare', 'Confezione']]
-        df_export = df_export.rename(columns={
-            'Codice': 'Codice Prodotto', 
-            'Categoria': 'Tipo',
-            'Da_Ordinare': 'Qta Ordine', 
-            'Confezione': 'Conf.to'
-        })
-        
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df_export.to_excel(writer, index=False)
-            
-        st.download_button(
-            "📥 Scarica Ordine (Excel)", 
-            data=buffer.getvalue(), 
-            file_name=f"ordine_abbott_{datetime.now().strftime('%Y-%m-%d')}.xlsx", 
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
-            type="primary"
-        )
+        st.dataframe(df_c.sort_values(by=['Da_Ordinare'], ascending=False)[['Stato', 'Categoria', 'Assay_Name', 'Descrizione', 'Codice', 'Giacenza', 'Target', 'Days_Left', 'Da_Ordinare']], use_container_width=True, hide_index=True)
 
-    # === TAB 3: SCADENZE ===
+    # === TAB 3: DA VERIFICARE (SPOSTATA) ===
+    with tab_controlli:
+        st.markdown("### ⏳ Allarme Giacenze Latenti (> 30 Giorni)")
+        da_verificare = []
+        now_dt = datetime.now()
+        for _, row in df_master.iterrows():
+            cod = str(row['Codice'])
+            info = st.session_state['magazzino'].get(cod, {})
+            um_str = info.get('ultima_modifica', '2000-01-01 00:00:00')
+            days_passed = 999 if um_str.startswith('2000') else (now_dt - datetime.strptime(um_str, "%Y-%m-%d %H:%M:%S")).days
+            if days_passed >= 30:
+                da_verificare.append({"Stato": "🚨 URGENTE" if info.get('qty',0) > 0 else "⚠️ VERIFICA", "Codice": cod, "Prodotto": row['Descrizione'], "Giacenza": info.get('qty', 0), "Ultima Modifica": um_str[:10], "Giorni": days_passed})
+        if da_verificare: st.dataframe(pd.DataFrame(da_verificare).sort_values(by='Giorni', ascending=False), use_container_width=True, hide_index=True)
+        else: st.success("🎉 Tutto aggiornato!")
+
+    # === TAB 4: SCADENZE ===
     with tab_scadenze:
         scad_list = []
         today = datetime.now().strftime("%Y-%m")
         limit = (datetime.now() + pd.DateOffset(months=3)).strftime("%Y-%m")
-        
         for cod, data in st.session_state['magazzino'].items():
             for batch in data['scadenze']:
-                if batch['sort'] < today: s = "☠️ SCADUTO"
-                elif batch['sort'] <= limit: s = "⚠️ SCADE PRESTO"
-                else: s = "🟢 OK"
-                
+                s = "☠️ SCADUTO" if batch['sort'] < today else ("⚠️ PRESTO" if batch['sort'] <= limit else "🟢 OK")
                 try: nome = df_master[df_master['Codice']==cod]['Descrizione'].iloc[0]
                 except: nome = cod
-                
                 scad_list.append({"Stato": s, "Prodotto": nome, "Qta": batch['qty'], "Scadenza": batch['display']})
-        
-        if scad_list:
-            st.dataframe(pd.DataFrame(scad_list).sort_values(by='Scadenza'), use_container_width=True, hide_index=True)
-        else:
-            st.info("Nessuna scadenza inserita.")
-
-    # === TAB 4: CONTROLLI (NOVITÀ) ===
-    with tab_controlli:
-        st.markdown("### ⏳ Allarme Giacenze Latenti (> 30 Giorni)")
-        st.write("Questa sezione ti mostra i prodotti che non subiscono variazioni (o conferme) da oltre 30 giorni. Ti aiuta a scovare eventuali sviste durante l'inventario fisico.")
-        
-        da_verificare = []
-        now_dt = datetime.now()
-        
-        for _, row in df_master.iterrows():
-            cod = str(row['Codice'])
-            nome = str(row['Descrizione'])
-            cat = str(row['Categoria'])
-            
-            info = st.session_state['magazzino'].get(cod, {})
-            qty = info.get('qty', 0)
-            um_str = info.get('ultima_modifica', '2000-01-01 00:00:00')
-            
-            if um_str.startswith('2000-01-01'):
-                days_passed = 999
-                um_display = "Mai Verificato"
-            else:
-                try:
-                    um_dt = datetime.strptime(um_str, "%Y-%m-%d %H:%M:%S")
-                    days_passed = (now_dt - um_dt).days
-                    um_display = um_dt.strftime("%d/%m/%Y")
-                except:
-                    days_passed = 999
-                    um_display = "Data Errata"
-                    
-            if days_passed >= 30:
-                da_verificare.append({
-                    "Stato": "🚨 URGENTE" if qty > 0 else "⚠️ DA CONTROLLARE",
-                    "Codice": cod,
-                    "Prodotto": nome,
-                    "Categoria": cat,
-                    "Giacenza a Sistema": qty,
-                    "Ultima Modifica": um_display,
-                    "Giorni Trascorsi": days_passed if days_passed != 999 else "♾️"
-                })
-                
-        if da_verificare:
-            df_ver = pd.DataFrame(da_verificare)
-            df_ver['sort_val'] = df_ver['Giorni Trascorsi'].apply(lambda x: 9999 if x == '♾️' else x)
-            df_ver = df_ver.sort_values(by=['Stato', 'sort_val'], ascending=[True, False]).drop(columns=['sort_val'])
-            
-            st.warning(f"⚠️ Ci sono {len(df_ver)} prodotti fermi da oltre 30 giorni!")
-            st.dataframe(
-                df_ver, 
-                use_container_width=True, 
-                hide_index=True,
-                column_config={
-                    "Stato": st.column_config.TextColumn("Stato", width="small"),
-                    "Codice": st.column_config.TextColumn("Codice", width="small"),
-                    "Prodotto": st.column_config.TextColumn("Prodotto", width="large"),
-                    "Categoria": st.column_config.TextColumn("Tipo", width="small"),
-                    "Giacenza a Sistema": st.column_config.NumberColumn("Giacenza", width="small"),
-                    "Ultima Modifica": st.column_config.TextColumn("Ultima Modifica", width="medium"),
-                    "Giorni Trascorsi": st.column_config.TextColumn("Giorni", width="small")
-                }
-            )
-            
-            st.info("💡 **Come rimuovere l'allarme:** Vai in '⚡ OPERAZIONI', seleziona il prodotto e scegli '🔧 RETTIFICA (=)'. Inserisci la quantità reale (anche se è uguale a quella già a sistema). L'app capirà che hai fatto una 'Conferma' e azzererà questo contatore!")
-        else:
-            st.success("🎉 Tutto aggiornato! Nessun prodotto è fermo da oltre 30 giorni.")
-
+        if scad_list: st.dataframe(pd.DataFrame(scad_list).sort_values(by='Scadenza'), use_container_width=True, hide_index=True)
+        else: st.info("Nessuna scadenza.")
 else:
     st.error("Errore Dati Master.")

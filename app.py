@@ -152,7 +152,7 @@ def load_master_data():
         has_valid_consumption = df['Kit_Mese_Numeric'] > 0
         is_cal = df['Categoria'].str.upper().str.contains("CAL", na=False)
         
-        # Paracadute per i prodotti speciali (Inclusi Mioglobina e Procalcitonina)
+        # Paracadute per i prodotti speciali
         is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina", case=False, na=False) | \
                      df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina", case=False, na=False) | \
                      df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820|06Q1461|1R3801|6P1401|8P9870|4V3730|1R1822", case=False, na=False)
@@ -200,9 +200,6 @@ def update_inventory(magazzino_dict):
 
 def manage_log_cloud(azione, prodotto_nome, qta):
     try:
-        try: df_log = conn.read(worksheet="Logs", ttl=0)
-        except: df_log = pd.DataFrame(columns=["Timestamp", "Data_Leggibile", "Azione", "Prodotto"])
-
         now = datetime.now()
         new_row = {
             "Timestamp": now,
@@ -210,6 +207,12 @@ def manage_log_cloud(azione, prodotto_nome, qta):
             "Azione": f"{azione} ({qta})",
             "Prodotto": prodotto_nome
         }
+        
+        # OTTIMIZZAZIONE: Usiamo il log già presente in session_state, evitiamo di rileggerlo da Google!
+        if 'cloud_log' in st.session_state and not st.session_state['cloud_log'].empty:
+            df_log = st.session_state['cloud_log'].copy()
+        else:
+            df_log = pd.DataFrame(columns=["Timestamp", "Data_Leggibile", "Azione", "Prodotto"])
         
         df_log = pd.concat([pd.DataFrame([new_row]), df_log], ignore_index=True)
         
@@ -430,7 +433,7 @@ if not df_master.empty:
                                             da_togliere -= batch['qty']
                                     else:
                                         new_scad.append(batch)
-                            ref['scadenze'] = new_scad
+                                ref['scadenze'] = new_scad
                             tipo_azione_log = "Rettifica"
 
                     if err:

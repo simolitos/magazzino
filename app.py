@@ -319,7 +319,9 @@ with st.sidebar:
 
     if not st.session_state['cloud_log'].empty:
         show_log = st.session_state['cloud_log'][['Data_Leggibile', 'Azione', 'Prodotto']].head(100)
-        st.dataframe(show_log, hide_index=True, use_container_width=True)
+        # Fix altezza log
+        log_height = max(150, len(show_log) * 36 + 43)
+        st.dataframe(show_log, hide_index=True, use_container_width=True, height=log_height)
     else:
         st.caption("Nessun evento recente.")
 
@@ -448,7 +450,6 @@ if not df_master.empty:
     with tab_ordini:
         st.markdown("### 🚦 Analisi Fabbisogno (1.25 Mesi)")
         
-        # --- RIPRISTINATA BARRA DI RICERCA E FILTRI ---
         c_search, c_filtro = st.columns([2,1])
         term = c_search.text_input("🔍 Cerca (Nome, Codice, Assay)...", placeholder="Scrivi qui...")
         filtro = c_filtro.multiselect("Filtra Stato:", ["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE", "🟢 OK"], default=["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE"])
@@ -480,7 +481,6 @@ if not df_master.empty:
 
         df_c[['Stato', 'Target', 'Da_Ordinare', 'Days_Left']] = df_c.apply(calcola_stato, axis=1)
         
-        # Applicazione dei filtri di ricerca e stato
         df_view = df_c.copy()
         if filtro: df_view = df_view[df_view['Stato'].isin(filtro)]
         if term: 
@@ -492,10 +492,14 @@ if not df_master.empty:
             ]
         df_view = df_view.sort_values(by=['Da_Ordinare'], ascending=False)
         
+        # FIX ALTEZZA: Elimina lo scorrimento fastidioso
+        ordini_height = max(150, len(df_view) * 36 + 43)
+        
         st.dataframe(
             df_view[['Stato', 'Categoria', 'Assay_Name', 'Descrizione', 'Codice', 'Giacenza', 'Target', 'Days_Left', 'Da_Ordinare']],
             use_container_width=True,
             hide_index=True,
+            height=ordini_height,
             column_config={
                 "Stato": st.column_config.TextColumn("Stato", width="small"),
                 "Categoria": st.column_config.TextColumn("Tipo", width="small"),
@@ -554,8 +558,13 @@ if not df_master.empty:
             days_passed = 999 if um_str.startswith('2000') else (now_dt - datetime.strptime(um_str, "%Y-%m-%d %H:%M:%S")).days
             if days_passed >= 30:
                 da_verificare.append({"Stato": "🚨 URGENTE" if info.get('qty',0) > 0 else "⚠️ VERIFICA", "Codice": cod, "Prodotto": row['Descrizione'], "Giacenza": info.get('qty', 0), "Ultima Modifica": um_str[:10], "Giorni": days_passed})
-        if da_verificare: st.dataframe(pd.DataFrame(da_verificare).sort_values(by='Giorni', ascending=False), use_container_width=True, hide_index=True)
-        else: st.success("🎉 Tutto aggiornato!")
+        
+        if da_verificare: 
+            df_ver = pd.DataFrame(da_verificare).sort_values(by='Giorni', ascending=False)
+            ver_height = max(150, len(df_ver) * 36 + 43)
+            st.dataframe(df_ver, use_container_width=True, hide_index=True, height=ver_height)
+        else: 
+            st.success("🎉 Tutto aggiornato!")
 
     # === TAB 4: SCADENZE ===
     with tab_scadenze:
@@ -588,7 +597,8 @@ if not df_master.empty:
             with st.container():
                 st.subheader("🧪 CALIBRATORI")
                 df_cal = pd.DataFrame(cal_list).sort_values(by='Scadenza')
-                st.dataframe(df_cal, use_container_width=True, hide_index=True)
+                cal_height = max(150, len(df_cal) * 36 + 43)
+                st.dataframe(df_cal, use_container_width=True, hide_index=True, height=cal_height)
         
         if cal_list and rgt_list: 
             st.markdown("<br><br>", unsafe_allow_html=True)
@@ -597,7 +607,8 @@ if not df_master.empty:
             with st.container():
                 st.subheader("📦 REAGENTI E CONSUMABILI")
                 df_rgt = pd.DataFrame(rgt_list).sort_values(by='Scadenza')
-                st.dataframe(df_rgt, use_container_width=True, hide_index=True)
+                rgt_height = max(150, len(df_rgt) * 36 + 43)
+                st.dataframe(df_rgt, use_container_width=True, hide_index=True, height=rgt_height)
             
         if not cal_list and not rgt_list:
             st.info("Nessuna scadenza inserita in magazzino.")

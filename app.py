@@ -434,7 +434,7 @@ if not df_master.empty:
                         ref['ultima_modifica'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         update_inventory(st.session_state['magazzino'])
                         qta_str = str(qty_input)
-                        if "RETTIFICA" in azione: qta_str = f"OK: {qty_input}" if tipo_azione_log == "Conferma" else f"-> {qty_input}"
+                        if "RETTIFICA" in azione: qta_str = f"OK: {qty_input}" if tipo_azione_log == "Conferma Giacenza" else f"-> {qty_input}"
                         st.session_state['cloud_log'] = manage_log_cloud(tipo_azione_log, row_art['Descrizione'], qta_str)
                         loader_placeholder.empty()
                         st.toast(f"✅ Salvato!", icon="☁️")
@@ -481,7 +481,7 @@ if not df_master.empty:
         if da_verificare: st.dataframe(pd.DataFrame(da_verificare).sort_values(by='Giorni', ascending=False), use_container_width=True, hide_index=True)
         else: st.success("🎉 Tutto aggiornato!")
 
-    # === TAB 4: SCADENZE (DIVISA IN GRUPPI) ===
+    # === TAB 4: SCADENZE ===
     with tab_scadenze:
         st.markdown("### 🗓️ Monitoraggio Scadenze Lotti")
         
@@ -491,7 +491,6 @@ if not df_master.empty:
         limit = (datetime.now() + pd.DateOffset(months=3)).strftime("%Y-%m")
         
         for cod, data in st.session_state['magazzino'].items():
-            # Trova info prodotto dal master
             try: 
                 master_row = df_master[df_master['Codice']==cod].iloc[0]
                 nome = master_row['Descrizione']
@@ -504,27 +503,31 @@ if not df_master.empty:
                 s = "☠️ SCADUTO" if batch['sort'] < today else ("⚠️ PRESTO" if batch['sort'] <= limit else "🟢 OK")
                 item = {"Stato": s, "Prodotto": nome, "Qta": batch['qty'], "Scadenza": batch['display']}
                 
-                # Smistamento nei due gruppi
                 if "CAL" in categoria:
                     cal_list.append(item)
                 else:
                     rgt_list.append(item)
         
-        # --- Visualizzazione Gruppo 1: CALIBRATORI ---
+        # Impacchettato in un container per evitare problemi di rendering Canvas
         if cal_list:
-            st.subheader("🧪 CALIBRATORI")
-            df_cal = pd.DataFrame(cal_list).sort_values(by='Scadenza')
-            st.dataframe(df_cal, use_container_width=True, hide_index=True)
+            with st.container():
+                st.subheader("🧪 CALIBRATORI")
+                df_cal = pd.DataFrame(cal_list).sort_values(by='Scadenza')
+                st.dataframe(df_cal, use_container_width=True, hide_index=True)
         
-        if cal_list and rgt_list: st.divider()
+        # Spaziatura pulita al posto della linea per evitare sbalzi CSS
+        if cal_list and rgt_list: 
+            st.markdown("<br><br>", unsafe_allow_html=True)
 
-        # --- Visualizzazione Gruppo 2: REAGENTI E ALTRO ---
+        # Impacchettato in un container isolato
         if rgt_list:
-            st.subheader("📦 REAGENTI E CONSUMABILI")
-            df_rgt = pd.DataFrame(rgt_list).sort_values(by='Scadenza')
-            st.dataframe(df_rgt, use_container_width=True, hide_index=True)
+            with st.container():
+                st.subheader("📦 REAGENTI E CONSUMABILI")
+                df_rgt = pd.DataFrame(rgt_list).sort_values(by='Scadenza')
+                st.dataframe(df_rgt, use_container_width=True, hide_index=True)
             
         if not cal_list and not rgt_list:
             st.info("Nessuna scadenza inserita in magazzino.")
+
 else:
     st.error("Errore Dati Master.")

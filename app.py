@@ -105,7 +105,6 @@ def load_master_data():
         
         df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
         
-        # Paracadute: assicuriamoci che esista la colonna Confezione anche se vuota
         if 'Confezione' not in df.columns:
             df['Confezione'] = ""
             
@@ -226,7 +225,6 @@ def manage_log_cloud(azione, prodotto_nome, qta):
         
         df_log = pd.concat([pd.DataFrame([new_row]), df_log], ignore_index=True)
         
-        # LOG ESTESO A 30 GIORNI
         days_ago_30 = now - timedelta(days=30)
         df_log['Timestamp'] = pd.to_datetime(df_log['Timestamp'])
         df_log_clean = df_log[df_log['Timestamp'] > days_ago_30]
@@ -310,8 +308,6 @@ with st.sidebar:
             else: st.warning("Magazzino vuoto!")
 
     st.divider()
-    
-    # MODIFICA: Log 30 Giorni
     st.header("📋 LOG (Ultimi 30gg)")
     
     if 'cloud_log' not in st.session_state:
@@ -322,7 +318,6 @@ with st.sidebar:
         st.rerun()
 
     if not st.session_state['cloud_log'].empty:
-        # Aumentato il limite visivo a 100 righe per contenere 30 giorni
         show_log = st.session_state['cloud_log'][['Data_Leggibile', 'Azione', 'Prodotto']].head(100)
         st.dataframe(show_log, hide_index=True, use_container_width=True)
     else:
@@ -452,6 +447,12 @@ if not df_master.empty:
     # === TAB 2: ORDINI ===
     with tab_ordini:
         st.markdown("### 🚦 Analisi Fabbisogno (1.25 Mesi)")
+        
+        # --- RIPRISTINATA BARRA DI RICERCA E FILTRI ---
+        c_search, c_filtro = st.columns([2,1])
+        term = c_search.text_input("🔍 Cerca (Nome, Codice, Assay)...", placeholder="Scrivi qui...")
+        filtro = c_filtro.multiselect("Filtra Stato:", ["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE", "🟢 OK"], default=["🔴 SOTTO MINIMO", "🔴 ESAURITO", "🟡 DA ORDINARE"])
+        
         df_c = df_master.copy()
         df_c['Giacenza'] = df_c['Codice'].apply(lambda x: st.session_state['magazzino'].get(x, {}).get('qty', 0))
         
@@ -459,29 +460,60 @@ if not df_master.empty:
             cod_pulito = str(row['Codice']).upper().replace("-", "").strip()
             consumo = row.get('Kit_Mese_Numeric', 0)
             target = math.ceil(consumo * TARGET_MESI)
+            
             if "4V3730" in cod_pulito: target += 1
             elif "1R1822" in cod_pulito: target += 2
+            
             target = max(target, 2)
+            
             if "CAL" in str(row['Categoria']).upper(): target = max(target, MIN_SCORTA_CAL)
+            
             da_ord = max(0, target - row['Giacenza'])
             days_left = int(row['Giacenza'] / (consumo/30)) if consumo > 0 and row['Giacenza'] > 0 else None
+            
             stato = "🟢 OK"
             if "CAL" in str(row['Categoria']).upper() and row['Giacenza'] < MIN_SCORTA_CAL: stato = "🔴 SOTTO MINIMO"
             elif row['Giacenza'] == 0: stato = "🔴 ESAURITO"
             elif da_ord > 0: stato = "🟡 DA ORDINARE"
+            
             return pd.Series([stato, target, da_ord, days_left])
 
         df_c[['Stato', 'Target', 'Da_Ordinare', 'Days_Left']] = df_c.apply(calcola_stato, axis=1)
-        st.dataframe(df_c.sort_values(by=['Da_Ordinare'], ascending=False)[['Stato', 'Categoria', 'Assay_Name', 'Descrizione', 'Codice', 'Giacenza', 'Target', 'Days_Left', 'Da_Ordinare']], use_container_width=True, hide_index=True)
+        
+        # Applicazione dei filtri di ricerca e stato
+        df_view = df_c.copy()
+        if filtro: df_view = df_view[df_view['Stato'].isin(filtro)]
+        if term: 
+            df_view = df_view[
+                df_view['Descrizione'].str.contains(term, case=False, na=False) | 
+                df_view['Codice'].str.contains(term, case=False, na=False) |
+                df_view['Categoria'].str.contains(term, case=False, na=False) |
+                df_view['Assay_Name'].str.contains(term, case=False, na=False)
+            ]
+        df_view = df_view.sort_values(by=['Da_Ordinare'], ascending=False)
+        
+        st.dataframe(
+            df_view[['Stato', 'Categoria', 'Assay_Name', 'Descrizione', 'Codice', 'Giacenza', 'Target', 'Days_Left', 'Da_Ordinare']],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Stato": st.column_config.TextColumn("Stato", width="small"),
+                "Categoria": st.column_config.TextColumn("Tipo", width="small"),
+                "Assay_Name": st.column_config.TextColumn("Assay", width="medium"),
+                "Descrizione": st.column_config.TextColumn("Prodotto", width="large"),
+                "Codice": st.column_config.TextColumn("LN Abbott", width="medium"),
+                "Target": st.column_config.NumberColumn("Target"),
+                "Days_Left": st.column_config.NumberColumn("Copertura", format="%d gg", help="Giorni di autonomia stimati"),
+                "Da_Ordinare": st.column_config.NumberColumn("🛒 ORDINA")
+            }
+        )
 
-        # FIX DOWNLOAD EXCEL
         st.divider()
         st.write("### 📤 Esporta per Fornitore")
         
         df_export = df_c[df_c['Da_Ordinare'] > 0].copy()
         
         if not df_export.empty:
-            # Assicuriamoci di non chiamare colonne inesistenti
             cols_to_export = ['Codice', 'Categoria', 'Descrizione', 'Da_Ordinare']
             if 'Confezione' in df_export.columns:
                 cols_to_export.append('Confezione')

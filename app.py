@@ -105,6 +105,10 @@ def load_master_data():
         
         df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
         
+        # Paracadute: assicuriamoci che esista la colonna Confezione anche se vuota
+        if 'Confezione' not in df.columns:
+            df['Confezione'] = ""
+            
         df = df[df['Descrizione'].notna() & df['Codice'].notna()] 
         df['Codice'] = df['Codice'].astype(str).str.replace('.0', '', regex=False)
         df['Categoria'] = df['Categoria'].astype(str).fillna('')
@@ -222,9 +226,10 @@ def manage_log_cloud(azione, prodotto_nome, qta):
         
         df_log = pd.concat([pd.DataFrame([new_row]), df_log], ignore_index=True)
         
-        days_ago_7 = now - timedelta(days=7)
+        # LOG ESTESO A 30 GIORNI
+        days_ago_30 = now - timedelta(days=30)
         df_log['Timestamp'] = pd.to_datetime(df_log['Timestamp'])
-        df_log_clean = df_log[df_log['Timestamp'] > days_ago_7]
+        df_log_clean = df_log[df_log['Timestamp'] > days_ago_30]
         
         conn.update(worksheet="Logs", data=df_log_clean)
         return df_log_clean
@@ -305,7 +310,9 @@ with st.sidebar:
             else: st.warning("Magazzino vuoto!")
 
     st.divider()
-    st.header("📋 LOG (Ultimi 7gg)")
+    
+    # MODIFICA: Log 30 Giorni
+    st.header("📋 LOG (Ultimi 30gg)")
     
     if 'cloud_log' not in st.session_state:
         st.session_state['cloud_log'] = fetch_only_log()
@@ -315,7 +322,8 @@ with st.sidebar:
         st.rerun()
 
     if not st.session_state['cloud_log'].empty:
-        show_log = st.session_state['cloud_log'][['Data_Leggibile', 'Azione', 'Prodotto']].head(50)
+        # Aumentato il limite visivo a 100 righe per contenere 30 giorni
+        show_log = st.session_state['cloud_log'][['Data_Leggibile', 'Azione', 'Prodotto']].head(100)
         st.dataframe(show_log, hide_index=True, use_container_width=True)
     else:
         st.caption("Nessun evento recente.")
@@ -466,6 +474,42 @@ if not df_master.empty:
         df_c[['Stato', 'Target', 'Da_Ordinare', 'Days_Left']] = df_c.apply(calcola_stato, axis=1)
         st.dataframe(df_c.sort_values(by=['Da_Ordinare'], ascending=False)[['Stato', 'Categoria', 'Assay_Name', 'Descrizione', 'Codice', 'Giacenza', 'Target', 'Days_Left', 'Da_Ordinare']], use_container_width=True, hide_index=True)
 
+        # FIX DOWNLOAD EXCEL
+        st.divider()
+        st.write("### 📤 Esporta per Fornitore")
+        
+        df_export = df_c[df_c['Da_Ordinare'] > 0].copy()
+        
+        if not df_export.empty:
+            # Assicuriamoci di non chiamare colonne inesistenti
+            cols_to_export = ['Codice', 'Categoria', 'Descrizione', 'Da_Ordinare']
+            if 'Confezione' in df_export.columns:
+                cols_to_export.append('Confezione')
+                
+            df_export = df_export[cols_to_export]
+            
+            rename_map = {
+                'Codice': 'Codice Prodotto', 
+                'Categoria': 'Tipo',
+                'Da_Ordinare': 'Qta Ordine', 
+                'Confezione': 'Conf.to'
+            }
+            df_export = df_export.rename(columns=rename_map)
+            
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df_export.to_excel(writer, index=False)
+                
+            st.download_button(
+                "📥 Scarica Ordine (Excel)", 
+                data=buffer.getvalue(), 
+                file_name=f"ordine_abbott_{datetime.now().strftime('%Y-%m-%d')}.xlsx", 
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                type="primary"
+            )
+        else:
+            st.success("Tutti i prodotti sono sopra il livello di guardia. Nessun ordine necessario!")
+
     # === TAB 3: DA VERIFICARE ===
     with tab_controlli:
         st.markdown("### ⏳ Allarme Giacenze Latenti (> 30 Giorni)")
@@ -508,18 +552,15 @@ if not df_master.empty:
                 else:
                     rgt_list.append(item)
         
-        # Impacchettato in un container per evitare problemi di rendering Canvas
         if cal_list:
             with st.container():
                 st.subheader("🧪 CALIBRATORI")
                 df_cal = pd.DataFrame(cal_list).sort_values(by='Scadenza')
                 st.dataframe(df_cal, use_container_width=True, hide_index=True)
         
-        # Spaziatura pulita al posto della linea per evitare sbalzi CSS
         if cal_list and rgt_list: 
             st.markdown("<br><br>", unsafe_allow_html=True)
 
-        # Impacchettato in un container isolato
         if rgt_list:
             with st.container():
                 st.subheader("📦 REAGENTI E CONSUMABILI")

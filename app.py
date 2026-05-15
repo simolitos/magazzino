@@ -556,22 +556,62 @@ if not df_master.empty:
     # === TAB 3: DA VERIFICARE ===
     with tab_controlli:
         st.markdown("### ⏳ Allarme Giacenze Latenti (> 30 Giorni)")
-        da_verificare = []
+        st.write("Prodotti non movimentati o confermati da oltre 30 giorni, divisi per categoria.")
+        
+        ver_rgt = []
+        ver_cal = []
+        ver_cons = []
+        ver_altro = []
+        
         now_dt = datetime.now()
         for _, row in df_master.iterrows():
             cod = str(row['Codice'])
+            cat_upper = str(row['Categoria']).upper()
             info = st.session_state['magazzino'].get(cod, {})
             um_str = info.get('ultima_modifica', '2000-01-01 00:00:00')
             days_passed = 999 if um_str.startswith('2000') else (now_dt - datetime.strptime(um_str, "%Y-%m-%d %H:%M:%S")).days
+            
             if days_passed >= 30:
-                da_verificare.append({"Stato": "🚨 URGENTE" if info.get('qty',0) > 0 else "⚠️ VERIFICA", "Codice": cod, "Prodotto": row['Descrizione'], "Giacenza": info.get('qty', 0), "Ultima Modifica": um_str[:10], "Giorni": days_passed})
+                item = {
+                    "Stato": "🚨 URGENTE" if info.get('qty',0) > 0 else "⚠️ VERIFICA", 
+                    "Codice": cod, 
+                    "Prodotto": row['Descrizione'], 
+                    "Giacenza": info.get('qty', 0), 
+                    "Ultima Modifica": um_str[:10], 
+                    "Giorni": days_passed
+                }
+                
+                # Smistamento per categoria
+                if "RGT" in cat_upper:
+                    ver_rgt.append(item)
+                elif "CAL" in cat_upper:
+                    ver_cal.append(item)
+                elif "CONS" in cat_upper:
+                    ver_cons.append(item)
+                else:
+                    ver_altro.append(item)
         
-        if da_verificare: 
-            df_ver = pd.DataFrame(da_verificare).sort_values(by='Giorni', ascending=False)
-            ver_height = max(150, len(df_ver) * 36 + 43)
-            st.dataframe(df_ver, use_container_width=True, hide_index=True, height=ver_height)
-        else: 
-            st.success("🎉 Tutto aggiornato!")
+        has_items = False
+        
+        # Funzione helper per disegnare le tabelle in modo pulito
+        def render_ver_table(data_list, title, icon):
+            if data_list:
+                with st.container():
+                    st.subheader(f"{icon} {title}")
+                    df_ver = pd.DataFrame(data_list).sort_values(by='Giorni', ascending=False)
+                    ver_height = max(150, len(df_ver) * 36 + 43)
+                    st.dataframe(df_ver, use_container_width=True, hide_index=True, height=ver_height)
+                st.markdown("<br>", unsafe_allow_html=True)
+                return True
+            return False
+
+        has_items |= render_ver_table(ver_rgt, "REAGENTI (RGT)", "🧪")
+        has_items |= render_ver_table(ver_cal, "CALIBRATORI (CAL)", "⚖️")
+        has_items |= render_ver_table(ver_cons, "CONSUMABILI (CONS)", "📦")
+        has_items |= render_ver_table(ver_altro, "ALTRO (Controlli, Varie)", "🏷️")
+        
+        if not has_items: 
+            st.success("🎉 Tutto aggiornato! Nessun prodotto è fermo da oltre 30 giorni.")
 
     # === TAB 4: SCADENZE ===
     with tab_scadenze:

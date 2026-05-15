@@ -110,6 +110,10 @@ def load_master_data():
             
         df = df[df['Descrizione'].notna() & df['Codice'].notna()] 
         df['Codice'] = df['Codice'].astype(str).str.replace('.0', '', regex=False)
+        
+        # --- SOSTITUZIONE CODICI OBSOLETI ---
+        df.loc[df['Codice'].str.contains("8P0602|8P06-02", case=False, na=False), 'Codice'] = "06T7901"
+        
         df['Categoria'] = df['Categoria'].astype(str).fillna('')
         df['Assay_Name'] = df['Assay_Name'].astype(str).fillna('')
         
@@ -131,6 +135,11 @@ def load_master_data():
         df.loc[df['Codice'].str.contains("1R3801|1R38-01", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 6
         df.loc[df['Codice'].str.contains("6P1401|6P14-01", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 45
         df.loc[df['Codice'].str.contains("8P9870|8P98-70", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 1
+        
+        # FIX CALIBRATORI: Forziamo la categoria a "CAL" e nomi
+        df.loc[df['Codice'].str.contains("08P6001|08P60-01", case=False, na=False), 'Descrizione'] = 'MC MCC CALS'
+        df.loc[df['Codice'].str.contains("08P6001|08P60-01", case=False, na=False), 'Categoria'] = 'CAL'
+        df.loc[df['Codice'].str.contains("06T7901", case=False, na=False), 'Categoria'] = 'CAL'
         
         df['Kit_Mese_Numeric'] = pd.to_numeric(df['Fabbisogno_Kit_Mese_Stimato'], errors='coerce')
         
@@ -155,9 +164,9 @@ def load_master_data():
         has_valid_consumption = df['Kit_Mese_Numeric'] > 0
         is_cal = df['Categoria'].str.upper().str.contains("CAL", na=False)
         
-        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina", case=False, na=False) | \
-                     df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina", case=False, na=False) | \
-                     df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820|06Q1461|1R3801|6P1401|8P9870|4V3730|1R1822", case=False, na=False)
+        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS", case=False, na=False) | \
+                     df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS", case=False, na=False) | \
+                     df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820|06Q1461|1R3801|6P1401|8P9870|4V3730|1R1822|08P6001|06T7901", case=False, na=False)
         
         df = df[has_valid_consumption | is_cal | is_special]
 
@@ -319,7 +328,6 @@ with st.sidebar:
 
     if not st.session_state['cloud_log'].empty:
         show_log = st.session_state['cloud_log'][['Data_Leggibile', 'Azione', 'Prodotto']].head(100)
-        # Fix altezza log
         log_height = max(150, len(show_log) * 36 + 43)
         st.dataframe(show_log, hide_index=True, use_container_width=True, height=log_height)
     else:
@@ -492,7 +500,6 @@ if not df_master.empty:
             ]
         df_view = df_view.sort_values(by=['Da_Ordinare'], ascending=False)
         
-        # FIX ALTEZZA: Elimina lo scorrimento fastidioso
         ordini_height = max(150, len(df_view) * 36 + 43)
         
         st.dataframe(

@@ -135,6 +135,9 @@ def load_master_data():
         df.loc[df['Codice'].str.contains("1R3801|1R38-01", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 6
         df.loc[df['Codice'].str.contains("6P1401|6P14-01", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 45
         df.loc[df['Codice'].str.contains("8P9870|8P98-70", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 1
+        # Nuove forzature Rame e Zinco
+        df.loc[df['Codice'].str.contains("0L10501|0L10-50", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 2
+        df.loc[df['Codice'].str.contains("0L10601|0L10-60", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 2
         
         # FIX CALIBRATORI: Forziamo la categoria a "CAL" e nomi
         df.loc[df['Codice'].str.contains("08P6001|08P60-01", case=False, na=False), 'Descrizione'] = 'MC MCC CALS'
@@ -164,9 +167,9 @@ def load_master_data():
         has_valid_consumption = df['Kit_Mese_Numeric'] > 0
         is_cal = df['Categoria'].str.upper().str.contains("CAL", na=False)
         
-        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS", case=False, na=False) | \
-                     df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS", case=False, na=False) | \
-                     df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820|06Q1461|1R3801|6P1401|8P9870|4V3730|1R1822|08P6001|06T7901", case=False, na=False)
+        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS|Rame|Zinco", case=False, na=False) | \
+                     df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS|Rame|Zinco", case=False, na=False) | \
+                     df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820|06Q1461|1R3801|6P1401|8P9870|4V3730|1R1822|08P6001|06T7901|0L10501|0L10601", case=False, na=False)
         
         df = df[has_valid_consumption | is_cal | is_special]
 
@@ -581,7 +584,6 @@ if not df_master.empty:
                     "Giorni": days_passed
                 }
                 
-                # Smistamento per categoria
                 if "RGT" in cat_upper:
                     ver_rgt.append(item)
                 elif "CAL" in cat_upper:
@@ -593,7 +595,6 @@ if not df_master.empty:
         
         has_items = False
         
-        # Funzione helper per disegnare le tabelle in modo pulito
         def render_ver_table(data_list, title, icon):
             if data_list:
                 with st.container():

@@ -395,7 +395,7 @@ if not df_master.empty:
             
             scelta = st.selectbox("Cerca Prodotto (Nome, Codice, Assay):", opzioni, index=None, placeholder="Digita per cercare...")
             
-        if choix := scelta:
+        if scelta:
             df_master['Menu_Label'] = df_master.apply(get_label, axis=1)
             row_art = df_master[df_master['Menu_Label'] == scelta].iloc[0]
             codice = str(row_art['Codice'])
@@ -676,7 +676,6 @@ if not df_master.empty:
                 
             for batch in data['scadenze']:
                 s = "☠️ SCADUTO" if batch['sort'] < today else ("⚠️ PRESTO" if batch['sort'] <= limit else "🟢 OK")
-                # MODIFICA: Inserito fin dall'inizio il campo 'Codice Prodotto' nell'oggetto item
                 item = {"Stato": s, "Codice Prodotto": cod, "Prodotto": nome, "Qta": batch['qty'], "Scadenza": batch['display']}
                 
                 if "CAL" in categoria:
@@ -693,6 +692,20 @@ if not df_master.empty:
                 st.dataframe(df_cal, use_container_width=True, hide_index=True, height=cal_height)
                 
                 df_cal_exp = df_cal[df_cal['Stato'].isin(['☠️ SCADUTO', '⚠️ PRESTO'])]
+                
+                # --- NUOVA LOGICA: Filtro Esportazione Calibratori ---
+                if not df_cal_exp.empty:
+                    # Calcoliamo quante scatole buone (🟢 OK) ci sono in magazzino per ogni calibratore
+                    valid_qty_cal = {}
+                    for _, row in df_cal.iterrows():
+                        c = row['Codice Prodotto']
+                        if c not in valid_qty_cal: valid_qty_cal[c] = 0
+                        if row['Stato'] == '🟢 OK':
+                            valid_qty_cal[c] += row['Qta']
+                    
+                    # Escludiamo dall'Excel i calibratori che hanno già 3 o più scatole sane
+                    df_cal_exp = df_cal_exp[df_cal_exp['Codice Prodotto'].apply(lambda c: valid_qty_cal.get(c, 0) < MIN_SCORTA_CAL)]
+                
                 if not df_cal_exp.empty:
                     buffer_cal = io.BytesIO()
                     with pd.ExcelWriter(buffer_cal, engine='openpyxl') as writer:
@@ -705,7 +718,7 @@ if not df_master.empty:
                         key="btn_exp_cal"
                     )
                 else:
-                    st.success("Tutti i calibratori hanno scadenze lontane! ✅")
+                    st.success("Tutti i calibratori sono al sicuro! (Le scorte valide sono sufficienti o le scadenze sono lontane) ✅")
         
         if cal_list and rgt_list: 
             st.markdown("<br><br>", unsafe_allow_html=True)

@@ -395,7 +395,7 @@ if not df_master.empty:
             
             scelta = st.selectbox("Cerca Prodotto (Nome, Codice, Assay):", opzioni, index=None, placeholder="Digita per cercare...")
             
-        if scelta:
+        if choix := scelta:
             df_master['Menu_Label'] = df_master.apply(get_label, axis=1)
             row_art = df_master[df_master['Menu_Label'] == scelta].iloc[0]
             codice = str(row_art['Codice'])
@@ -663,7 +663,6 @@ if not df_master.empty:
         cal_list = []
         rgt_list = []
         today = datetime.now().strftime("%Y-%m")
-        # MODIFICA: Allarme scadenze ristretto a 2 mesi (prima era 3)
         limit = (datetime.now() + pd.DateOffset(months=2)).strftime("%Y-%m")
         
         for cod, data in st.session_state['magazzino'].items():
@@ -677,7 +676,8 @@ if not df_master.empty:
                 
             for batch in data['scadenze']:
                 s = "☠️ SCADUTO" if batch['sort'] < today else ("⚠️ PRESTO" if batch['sort'] <= limit else "🟢 OK")
-                item = {"Stato": s, "Prodotto": nome, "Qta": batch['qty'], "Scadenza": batch['display']}
+                # MODIFICA: Inserito fin dall'inizio il campo 'Codice Prodotto' nell'oggetto item
+                item = {"Stato": s, "Codice Prodotto": cod, "Prodotto": nome, "Qta": batch['qty'], "Scadenza": batch['display']}
                 
                 if "CAL" in categoria:
                     cal_list.append(item)
@@ -692,7 +692,6 @@ if not df_master.empty:
                 cal_height = max(150, len(df_cal) * 36 + 43)
                 st.dataframe(df_cal, use_container_width=True, hide_index=True, height=cal_height)
                 
-                # Download Export Calibratori in scadenza
                 df_cal_exp = df_cal[df_cal['Stato'].isin(['☠️ SCADUTO', '⚠️ PRESTO'])]
                 if not df_cal_exp.empty:
                     buffer_cal = io.BytesIO()
@@ -719,7 +718,6 @@ if not df_master.empty:
                 rgt_height = max(150, len(df_rgt) * 36 + 43)
                 st.dataframe(df_rgt, use_container_width=True, hide_index=True, height=rgt_height)
                 
-                # Download Export Reagenti in scadenza
                 df_rgt_exp = df_rgt[df_rgt['Stato'].isin(['☠️ SCADUTO', '⚠️ PRESTO'])]
                 if not df_rgt_exp.empty:
                     buffer_rgt = io.BytesIO()

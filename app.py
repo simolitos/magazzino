@@ -346,6 +346,38 @@ if 'magazzino' not in st.session_state:
 
 if not df_master.empty:
     
+    # --- FUNZIONE POP-UP DI CONFERMA ---
+    @st.dialog("⚠️ Conferma Azzeramento")
+    def open_reset_dialog(cod, nome):
+        st.warning(f"Sei sicuro di voler azzerare le quantità di **{nome}**?")
+        st.caption("Questa azione eliminerà anche lo storico e tutte le scadenze inserite per questo prodotto.")
+        
+        c_no, c_yes = st.columns(2)
+        
+        if c_no.button("❌ Annulla", use_container_width=True):
+            st.rerun()
+            
+        if c_yes.button("✅ Sì, Azzera", type="primary", use_container_width=True):
+            loader_placeholder = st.empty()
+            loader_placeholder.markdown("""<div id="custom-loader"><div class="spinner"></div><div class="loading-text">Azzeramento in corso...</div></div>""", unsafe_allow_html=True)
+            
+            ref = st.session_state['magazzino'][cod]
+            old_qty = ref['qty']
+            
+            # Reset radicale a zero
+            ref['qty'] = 0
+            ref['scadenze'] = []
+            ref['ultima_modifica'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            update_inventory(st.session_state['magazzino'])
+            st.session_state['cloud_log'] = manage_log_cloud("Reset Scorte", nome, f"{old_qty} -> 0")
+            
+            loader_placeholder.empty()
+            st.toast("✅ Scorte azzerate con successo!", icon="🗑️")
+            time.sleep(0.5) 
+            st.rerun()
+
+
     tab_mov, tab_ordini, tab_controlli, tab_scadenze = st.tabs(["⚡ OPERAZIONI", "🛒 ORDINI & ANALISI", "⏳ DA VERIFICARE", "🗓️ SCADENZE"])
 
     # === TAB 1: OPERAZIONI ===
@@ -462,29 +494,11 @@ if not df_master.empty:
                         time.sleep(0.5) 
                         st.rerun()
 
-                # TASTO RESET QUANTITÀ
+                # TASTO RESET QUANTITÀ CON POP-UP
                 if col_btn2.button("🗑️ AZZERA (0)", use_container_width=True):
-                    loader_placeholder = st.empty()
-                    loader_placeholder.markdown("""<div id="custom-loader"><div class="spinner"></div><div class="loading-text">Azzeramento in corso...</div></div>""", unsafe_allow_html=True)
-                    
                     if codice not in st.session_state['magazzino']:
                         st.session_state['magazzino'][codice] = {'qty': 0, 'scadenze': [], 'ultima_modifica': '2000-01-01 00:00:00'}
-                    
-                    ref = st.session_state['magazzino'][codice]
-                    old_qty = ref['qty']
-                    
-                    # Reset radicale a zero
-                    ref['qty'] = 0
-                    ref['scadenze'] = []
-                    ref['ultima_modifica'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    
-                    update_inventory(st.session_state['magazzino'])
-                    st.session_state['cloud_log'] = manage_log_cloud("Reset Scorte", row_art['Descrizione'], f"{old_qty} -> 0")
-                    
-                    loader_placeholder.empty()
-                    st.toast("✅ Scorte azzerate!", icon="🗑️")
-                    time.sleep(0.5) 
-                    st.rerun()
+                    open_reset_dialog(codice, row_art['Descrizione'])
 
     # === TAB 2: ORDINI ===
     with tab_ordini:

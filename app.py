@@ -137,14 +137,12 @@ def load_master_data():
         df.loc[df['Codice'].str.contains("8P9870|8P98-70", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 1
         df.loc[df['Codice'].str.contains("0L10501|0L10-50", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 2
         df.loc[df['Codice'].str.contains("0L10601|0L10-60", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 2
-        # Nuova forzatura NSE Reagenti (1 scatola al mese)
         df.loc[df['Codice'].str.contains("1R1922|1R19-22", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 1
         
-        # FIX CALIBRATORI: Forziamo la categoria a "CAL" e nomi corretti
+        # FIX CALIBRATORI: Forziamo la categoria a "CAL" e nomi
         df.loc[df['Codice'].str.contains("08P6001|08P60-01", case=False, na=False), 'Descrizione'] = 'MC MCC CALS'
         df.loc[df['Codice'].str.contains("08P6001|08P60-01", case=False, na=False), 'Categoria'] = 'CAL'
         df.loc[df['Codice'].str.contains("06T7901", case=False, na=False), 'Categoria'] = 'CAL'
-        # Forzatura categoria CAL per i nuovi calibratori Cu-Zn e NSE
         df.loc[df['Codice'].str.contains("0L10701|0L10-70", case=False, na=False), 'Categoria'] = 'CAL'
         df.loc[df['Codice'].str.contains("1R1901|1R19-01", case=False, na=False), 'Categoria'] = 'CAL'
         
@@ -393,7 +391,10 @@ if not df_master.empty:
                         scad_display = f"{mm:02d}/{yy}"
                         scad_sort = f"{yy}-{mm:02d}"
 
-                if st.button("🚀 ESEGUI OPERAZIONE", type="primary", use_container_width=True):
+                st.markdown("<br>", unsafe_allow_html=True)
+                col_btn1, col_btn2 = st.columns([3, 1])
+
+                if col_btn1.button("🚀 ESEGUI OPERAZIONE", type="primary", use_container_width=True):
                     loader_placeholder = st.empty()
                     loader_placeholder.markdown("""<div id="custom-loader"><div class="spinner"></div><div class="loading-text">Salvataggio in Cloud...</div></div>""", unsafe_allow_html=True)
                     
@@ -460,6 +461,30 @@ if not df_master.empty:
                         st.toast(f"✅ Salvato!", icon="☁️")
                         time.sleep(0.5) 
                         st.rerun()
+
+                # TASTO RESET QUANTITÀ
+                if col_btn2.button("🗑️ AZZERA (0)", use_container_width=True):
+                    loader_placeholder = st.empty()
+                    loader_placeholder.markdown("""<div id="custom-loader"><div class="spinner"></div><div class="loading-text">Azzeramento in corso...</div></div>""", unsafe_allow_html=True)
+                    
+                    if codice not in st.session_state['magazzino']:
+                        st.session_state['magazzino'][codice] = {'qty': 0, 'scadenze': [], 'ultima_modifica': '2000-01-01 00:00:00'}
+                    
+                    ref = st.session_state['magazzino'][codice]
+                    old_qty = ref['qty']
+                    
+                    # Reset radicale a zero
+                    ref['qty'] = 0
+                    ref['scadenze'] = []
+                    ref['ultima_modifica'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    
+                    update_inventory(st.session_state['magazzino'])
+                    st.session_state['cloud_log'] = manage_log_cloud("Reset Scorte", row_art['Descrizione'], f"{old_qty} -> 0")
+                    
+                    loader_placeholder.empty()
+                    st.toast("✅ Scorte azzerate!", icon="🗑️")
+                    time.sleep(0.5) 
+                    st.rerun()
 
     # === TAB 2: ORDINI ===
     with tab_ordini:

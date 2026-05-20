@@ -695,7 +695,7 @@ if not df_master.empty:
                 
                 # --- NUOVA LOGICA: Filtro Esportazione Calibratori ---
                 if not df_cal_exp.empty:
-                    # Calcoliamo quante scatole buone (🟢 OK) ci sono in magazzino per ogni calibratore
+                    # Conta le scorte sane per ogni codice
                     valid_qty_cal = {}
                     for _, row in df_cal.iterrows():
                         c = row['Codice Prodotto']
@@ -703,22 +703,43 @@ if not df_master.empty:
                         if row['Stato'] == '🟢 OK':
                             valid_qty_cal[c] += row['Qta']
                     
-                    # Escludiamo dall'Excel i calibratori che hanno già 3 o più scatole sane
-                    df_cal_exp = df_cal_exp[df_cal_exp['Codice Prodotto'].apply(lambda c: valid_qty_cal.get(c, 0) < MIN_SCORTA_CAL)]
-                
-                if not df_cal_exp.empty:
-                    buffer_cal = io.BytesIO()
-                    with pd.ExcelWriter(buffer_cal, engine='openpyxl') as writer:
-                        df_cal_exp.to_excel(writer, index=False)
-                    st.download_button(
-                        "📥 Esporta Calibratori in Scadenza (Excel)", 
-                        data=buffer_cal.getvalue(), 
-                        file_name=f"calibratori_in_scadenza_{datetime.now().strftime('%Y%m%d')}.xlsx", 
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="btn_exp_cal"
-                    )
+                    cal_export_data = []
+                    
+                    # Raggruppa i lotti in scadenza per prodotto
+                    for c_code, group in df_cal_exp.groupby('Codice Prodotto'):
+                        valid = valid_qty_cal.get(c_code, 0)
+                        
+                        # Se le scorte sane sono meno di 3, calcoliamo quante chiederne
+                        if valid < MIN_SCORTA_CAL:
+                            da_reintegrare = MIN_SCORTA_CAL - valid
+                            scadenze_str = ", ".join(group['Scadenza'].tolist())
+                            
+                            cal_export_data.append({
+                                'Codice Prodotto': c_code,
+                                'Prodotto': group['Prodotto'].iloc[0],
+                                'Lotti in Scadenza': scadenze_str,
+                                'Qta Scaduta/In Scadenza': group['Qta'].sum(),
+                                'Giacenza Valida Residua': valid,
+                                'Qta da Richiedere (Max 3)': da_reintegrare
+                            })
+                            
+                    df_cal_export_final = pd.DataFrame(cal_export_data)
+                    
+                    if not df_cal_export_final.empty:
+                        buffer_cal = io.BytesIO()
+                        with pd.ExcelWriter(buffer_cal, engine='openpyxl') as writer:
+                            df_cal_export_final.to_excel(writer, index=False)
+                        st.download_button(
+                            "📥 Esporta Reintegro Calibratori (Excel)", 
+                            data=buffer_cal.getvalue(), 
+                            file_name=f"reintegro_calibratori_{datetime.now().strftime('%Y%m%d')}.xlsx", 
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="btn_exp_cal"
+                        )
+                    else:
+                        st.success("Tutti i calibratori sono al sicuro! (Le scorte valide sono sufficienti) ✅")
                 else:
-                    st.success("Tutti i calibratori sono al sicuro! (Le scorte valide sono sufficienti o le scadenze sono lontane) ✅")
+                    st.success("Tutti i calibratori hanno scadenze lontane! ✅")
         
         if cal_list and rgt_list: 
             st.markdown("<br><br>", unsafe_allow_html=True)

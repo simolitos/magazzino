@@ -494,7 +494,6 @@ if not df_master.empty:
                         time.sleep(0.5) 
                         st.rerun()
 
-                # TASTO RESET QUANTITÀ CON POP-UP
                 if col_btn2.button("🗑️ AZZERA (0)", use_container_width=True):
                     if codice not in st.session_state['magazzino']:
                         st.session_state['magazzino'][codice] = {'qty': 0, 'scadenze': [], 'ultima_modifica': '2000-01-01 00:00:00'}
@@ -664,7 +663,8 @@ if not df_master.empty:
         cal_list = []
         rgt_list = []
         today = datetime.now().strftime("%Y-%m")
-        limit = (datetime.now() + pd.DateOffset(months=3)).strftime("%Y-%m")
+        # MODIFICA: Allarme scadenze ristretto a 2 mesi (prima era 3)
+        limit = (datetime.now() + pd.DateOffset(months=2)).strftime("%Y-%m")
         
         for cod, data in st.session_state['magazzino'].items():
             try: 
@@ -684,22 +684,56 @@ if not df_master.empty:
                 else:
                     rgt_list.append(item)
         
+        # --- TABELLA CALIBRATORI ---
         if cal_list:
             with st.container():
                 st.subheader("🧪 CALIBRATORI")
                 df_cal = pd.DataFrame(cal_list).sort_values(by='Scadenza')
                 cal_height = max(150, len(df_cal) * 36 + 43)
                 st.dataframe(df_cal, use_container_width=True, hide_index=True, height=cal_height)
+                
+                # Download Export Calibratori in scadenza
+                df_cal_exp = df_cal[df_cal['Stato'].isin(['☠️ SCADUTO', '⚠️ PRESTO'])]
+                if not df_cal_exp.empty:
+                    buffer_cal = io.BytesIO()
+                    with pd.ExcelWriter(buffer_cal, engine='openpyxl') as writer:
+                        df_cal_exp.to_excel(writer, index=False)
+                    st.download_button(
+                        "📥 Esporta Calibratori in Scadenza (Excel)", 
+                        data=buffer_cal.getvalue(), 
+                        file_name=f"calibratori_in_scadenza_{datetime.now().strftime('%Y%m%d')}.xlsx", 
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="btn_exp_cal"
+                    )
+                else:
+                    st.success("Tutti i calibratori hanno scadenze lontane! ✅")
         
         if cal_list and rgt_list: 
             st.markdown("<br><br>", unsafe_allow_html=True)
 
+        # --- TABELLA REAGENTI E CONSUMABILI ---
         if rgt_list:
             with st.container():
                 st.subheader("📦 REAGENTI E CONSUMABILI")
                 df_rgt = pd.DataFrame(rgt_list).sort_values(by='Scadenza')
                 rgt_height = max(150, len(df_rgt) * 36 + 43)
                 st.dataframe(df_rgt, use_container_width=True, hide_index=True, height=rgt_height)
+                
+                # Download Export Reagenti in scadenza
+                df_rgt_exp = df_rgt[df_rgt['Stato'].isin(['☠️ SCADUTO', '⚠️ PRESTO'])]
+                if not df_rgt_exp.empty:
+                    buffer_rgt = io.BytesIO()
+                    with pd.ExcelWriter(buffer_rgt, engine='openpyxl') as writer:
+                        df_rgt_exp.to_excel(writer, index=False)
+                    st.download_button(
+                        "📥 Esporta Reagenti in Scadenza (Excel)", 
+                        data=buffer_rgt.getvalue(), 
+                        file_name=f"reagenti_in_scadenza_{datetime.now().strftime('%Y%m%d')}.xlsx", 
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="btn_exp_rgt"
+                    )
+                else:
+                    st.success("Tutti i reagenti hanno scadenze lontane! ✅")
             
         if not cal_list and not rgt_list:
             st.info("Nessuna scadenza inserita in magazzino.")

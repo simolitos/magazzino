@@ -72,7 +72,7 @@ st.markdown("""
 MESI_COPERTURA = 1.0      
 MESI_BUFFER = 0.25        
 TARGET_MESI = MESI_COPERTURA + MESI_BUFFER 
-MIN_SCORTA_CAL = 3        
+MIN_SCORTA_CAL = 5        
 
 # --- CONNESSIONE ---
 try:
@@ -139,7 +139,7 @@ def load_master_data():
         df.loc[df['Codice'].str.contains("0L10601|0L10-60", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 2
         df.loc[df['Codice'].str.contains("1R1922|1R19-22", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 1
         
-        # Nuove forzature Droghe (DOA) - Richieste 3 scatole
+        # Forzature Droghe (DOA) - Richieste 3 scatole
         doa_pattern = "Cocaina|Oppiacei|Cannabinoidi|Anfetamina|Metanfetamine|Benzodiazepine|Metadone"
         mask_doa = df['Descrizione'].str.contains(doa_pattern, case=False, na=False) & df['Descrizione'].str.contains("Reagente", case=False, na=False)
         df.loc[mask_doa, 'Fabbisogno_Kit_Mese_Stimato'] = 3
@@ -185,7 +185,7 @@ def load_master_data():
         st.error(f"Errore Excel: {e}")
         return pd.DataFrame()
 
-# --- FUNZIONI CLOUD ---
+# --- FUNZIONI CLOUD E UTILITÀ ---
 def fetch_inventory():
     try:
         df_db = conn.read(worksheet="Foglio1", ttl=0)
@@ -303,6 +303,38 @@ def create_pdf_report(df_data):
         pdf.ln(5)
     return pdf.output(dest='S').encode('latin-1')
 
+# --- FUNZIONE POP-UP DI CONFERMA (Posizionata in Global Scope per stabilità) ---
+@st.dialog("⚠️ Conferma Azzeramento")
+def open_reset_dialog(cod, nome):
+    st.warning(f"Sei sicuro di voler azzerare le quantità di **{nome}**?")
+    st.caption("Questa azione eliminerà anche lo storico e tutte le scadenze inserite per questo prodotto.")
+    
+    c_no, c_yes = st.columns(2)
+    
+    if c_no.button("❌ Annulla", use_container_width=True):
+        st.rerun()
+        
+    if c_yes.button("✅ Sì, Azzera", type="primary", use_container_width=True):
+        loader_placeholder = st.empty()
+        loader_placeholder.markdown("""<div id="custom-loader"><div class="spinner"></div><div class="loading-text">Azzeramento in corso...</div></div>""", unsafe_allow_html=True)
+        
+        ref = st.session_state['magazzino'][cod]
+        old_qty = ref['qty']
+        
+        # Reset radicale a zero
+        ref['qty'] = 0
+        ref['scadenze'] = []
+        ref['ultima_modifica'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        update_inventory(st.session_state['magazzino'])
+        st.session_state['cloud_log'] = manage_log_cloud("Reset Scorte", nome, f"{old_qty} -> 0")
+        
+        loader_placeholder.empty()
+        st.toast("✅ Scorte azzerate con successo!", icon="🗑️")
+        time.sleep(0.5) 
+        st.rerun()
+
+
 # --- HEADER ---
 st.markdown("""
     <div>
@@ -350,38 +382,6 @@ if 'magazzino' not in st.session_state:
         st.session_state['magazzino'] = fetch_inventory()
 
 if not df_master.empty:
-    
-    # --- FUNZIONE POP-UP DI CONFERMA ---
-    @st.dialog("⚠️ Conferma Azzeramento")
-    def open_reset_dialog(cod, nome):
-        st.warning(f"Sei sicuro di voler azzerare le quantità di **{nome}**?")
-        st.caption("Questa azione eliminerà anche lo storico e tutte le scadenze inserite per questo prodotto.")
-        
-        c_no, c_yes = st.columns(2)
-        
-        if c_no.button("❌ Annulla", use_container_width=True):
-            st.rerun()
-            
-        if c_yes.button("✅ Sì, Azzera", type="primary", use_container_width=True):
-            loader_placeholder = st.empty()
-            loader_placeholder.markdown("""<div id="custom-loader"><div class="spinner"></div><div class="loading-text">Azzeramento in corso...</div></div>""", unsafe_allow_html=True)
-            
-            ref = st.session_state['magazzino'][cod]
-            old_qty = ref['qty']
-            
-            # Reset radicale a zero
-            ref['qty'] = 0
-            ref['scadenze'] = []
-            ref['ultima_modifica'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            
-            update_inventory(st.session_state['magazzino'])
-            st.session_state['cloud_log'] = manage_log_cloud("Reset Scorte", nome, f"{old_qty} -> 0")
-            
-            loader_placeholder.empty()
-            st.toast("✅ Scorte azzerate con successo!", icon="🗑️")
-            time.sleep(0.5) 
-            st.rerun()
-
 
     tab_mov, tab_ordini, tab_controlli, tab_scadenze = st.tabs(["⚡ OPERAZIONI", "🛒 ORDINI & ANALISI", "⏳ DA VERIFICARE", "🗓️ SCADENZE"])
 
@@ -619,7 +619,15 @@ if not df_master.empty:
             cat_upper = str(row['Categoria']).upper()
             info = st.session_state['magazzino'].get(cod, {})
             um_str = info.get('ultima_modifica', '2000-01-01 00:00:00')
-            days_passed = 999 if um_str.startswith('2000') else (now_dt - datetime.strptime(um_str, "%Y-%m-%d %H:%M:%S")).days
+            
+            # BLOCCO TRY-EXCEPT RIPRISTINATO PER SICUREZZA
+            try:
+                if um_str.startswith('2000'):
+                    days_passed = 999
+                else:
+                    days_passed = (now_dt - datetime.strptime(um_str, "%Y-%m-%d %H:%M:%S")).days
+            except Exception:
+                days_passed = 999
             
             if days_passed >= 30:
                 item = {
@@ -721,7 +729,7 @@ if not df_master.empty:
                                 'Lotti in Scadenza': scadenze_str,
                                 'Qta Scaduta/In Scadenza': group['Qta'].sum(),
                                 'Giacenza Valida Residua': valid,
-                                'Qta da Richiedere (Max 3)': da_reintegrare
+                                f'Qta da Richiedere (Max {MIN_SCORTA_CAL})': da_reintegrare
                             })
                             
                     df_cal_export_final = pd.DataFrame(cal_export_data)

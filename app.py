@@ -70,7 +70,7 @@ st.markdown("""
 
 # --- PARAMETRI ---
 MESI_COPERTURA = 1.0      
-MESI_BUFFER = 0.25        
+MESI_BUFFER = 0.50        # MODIFICA: Alzato a 0.50 (2 settimane) per un totale di 1.5 mesi
 TARGET_MESI = MESI_COPERTURA + MESI_BUFFER 
 MIN_SCORTA_CAL = 5        
 
@@ -303,7 +303,7 @@ def create_pdf_report(df_data):
         pdf.ln(5)
     return pdf.output(dest='S').encode('latin-1')
 
-# --- FUNZIONE POP-UP DI CONFERMA (Posizionata in Global Scope per stabilità) ---
+# --- FUNZIONE POP-UP DI CONFERMA ---
 @st.dialog("⚠️ Conferma Azzeramento")
 def open_reset_dialog(cod, nome):
     st.warning(f"Sei sicuro di voler azzerare le quantità di **{nome}**?")
@@ -321,7 +321,6 @@ def open_reset_dialog(cod, nome):
         ref = st.session_state['magazzino'][cod]
         old_qty = ref['qty']
         
-        # Reset radicale a zero
         ref['qty'] = 0
         ref['scadenze'] = []
         ref['ultima_modifica'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -506,7 +505,8 @@ if not df_master.empty:
 
     # === TAB 2: ORDINI ===
     with tab_ordini:
-        st.markdown("### 🚦 Analisi Fabbisogno (1.25 Mesi)")
+        # MODIFICA: Aggiornato titolo con la dicitura corretta
+        st.markdown("### 🚦 Analisi Fabbisogno (1.5 Mesi / 1 Mese e 2 Settimane)")
         
         c_search, c_filtro = st.columns([2,1])
         term = c_search.text_input("🔍 Cerca (Nome, Codice, Assay)...", placeholder="Scrivi qui...")
@@ -620,7 +620,6 @@ if not df_master.empty:
             info = st.session_state['magazzino'].get(cod, {})
             um_str = info.get('ultima_modifica', '2000-01-01 00:00:00')
             
-            # BLOCCO TRY-EXCEPT RIPRISTINATO PER SICUREZZA
             try:
                 if um_str.startswith('2000'):
                     days_passed = 999

@@ -70,7 +70,7 @@ st.markdown("""
 
 # --- PARAMETRI ---
 MESI_COPERTURA = 1.0      
-MESI_BUFFER = 0.50        # MODIFICA: Alzato a 0.50 (2 settimane) per un totale di 1.5 mesi
+MESI_BUFFER = 0.50        
 TARGET_MESI = MESI_COPERTURA + MESI_BUFFER 
 MIN_SCORTA_CAL = 5        
 
@@ -211,14 +211,15 @@ def fetch_inventory():
 def update_inventory(magazzino_dict):
     data_list = []
     for cod, info in magazzino_dict.items():
-        if info['qty'] > 0: 
-            um = info.get('ultima_modifica', '2000-01-01 00:00:00')
-            data_list.append({
-                "Codice": cod,
-                "Quantita": info['qty'],
-                "Scadenze_JSON": json.dumps(info['scadenze']),
-                "Ultima_Modifica": um
-            })
+        # FIX: Rimosso il limite "if info['qty'] > 0". Ora salviamo TUTTO, 
+        # compresi i prodotti a quantità zero, per non perdere la traccia della loro ultima verifica!
+        um = info.get('ultima_modifica', '2000-01-01 00:00:00')
+        data_list.append({
+            "Codice": cod,
+            "Quantita": info.get('qty', 0),
+            "Scadenze_JSON": json.dumps(info.get('scadenze', [])),
+            "Ultima_Modifica": um
+        })
     
     if not data_list:
         df_new = pd.DataFrame(columns=["Codice", "Quantita", "Scadenze_JSON", "Ultima_Modifica"])
@@ -505,7 +506,6 @@ if not df_master.empty:
 
     # === TAB 2: ORDINI ===
     with tab_ordini:
-        # MODIFICA: Aggiornato titolo con la dicitura corretta
         st.markdown("### 🚦 Analisi Fabbisogno (1.5 Mesi / 1 Mese e 2 Settimane)")
         
         c_search, c_filtro = st.columns([2,1])

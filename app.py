@@ -111,6 +111,24 @@ def load_master_data():
         df = df[df['Descrizione'].notna() & df['Codice'].notna()] 
         df['Codice'] = df['Codice'].astype(str).str.replace('.0', '', regex=False)
         
+        # --- INIEZIONE VIRTUALE PRODOTTI MANCANTI DALL'EXCEL ---
+        prodotti_volanti = [
+            {'Codice': '06Q1061', 'Descrizione': 'GLP systems Track Recap LARGE', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 7, 'Assay_Name': ''},
+            {'Codice': '06Q1051', 'Descrizione': 'GLP systems Track Recaps SMALL', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 14, 'Assay_Name': ''},
+            {'Codice': '06Q1402', 'Descrizione': 'GLP system Track Secondary Tubes (PUSH)', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 20, 'Assay_Name': ''}
+        ]
+        
+        codici_puliti = df['Codice'].astype(str).str.replace('-', '', regex=False).str.upper().tolist()
+        nuove_righe = []
+        
+        for p in prodotti_volanti:
+            if p['Codice'] not in codici_puliti:
+                nuove_righe.append(p)
+                
+        if nuove_righe:
+            df_nuovi = pd.DataFrame(nuove_righe)
+            df = pd.concat([df, df_nuovi], ignore_index=True)
+
         # --- SOSTITUZIONE CODICI OBSOLETI ---
         df.loc[df['Codice'].str.contains("8P0602|8P06-02", case=False, na=False), 'Codice'] = "06T7901"
         
@@ -139,11 +157,6 @@ def load_master_data():
         df.loc[df['Codice'].str.contains("0L10601|0L10-60", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 2
         df.loc[df['Codice'].str.contains("1R1922|1R19-22", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 1
         
-        # Nuovi prodotti consumabili GLP Track e Secondary Tubes (Calcolo fabbisogno inverso in base al Target)
-        df.loc[df['Codice'].str.contains("06Q1061|06Q10-61", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 7
-        df.loc[df['Codice'].str.contains("06Q1051|06Q10-51", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 14
-        df.loc[df['Codice'].str.contains("06Q1402|06Q14-02", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 20
-
         # Forzature Droghe (DOA) - Richieste 3 scatole
         doa_pattern = "Cocaina|Oppiacei|Cannabinoidi|Anfetamina|Metanfetamine|Benzodiazepine|Metadone"
         mask_doa = df['Descrizione'].str.contains(doa_pattern, case=False, na=False) & df['Descrizione'].str.contains("Reagente", case=False, na=False)
@@ -181,7 +194,7 @@ def load_master_data():
         
         is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS|Rame|Zinco|Cu-Zn|NSE|Cocaina|Oppiacei|Cannabinoidi|Anfetamina|Metanfetamine|Benzodiazepine|Metadone|Recap|Secondary Tubes PUSH", case=False, na=False) | \
                      df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS|Rame|Zinco|Cu-Zn|NSE|Cocaina|Oppiacei|Cannabinoidi|Anfetamina|Metanfetamine|Benzodiazepine|Metadone|Recap|Secondary Tubes PUSH", case=False, na=False) | \
-                     df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820|06Q1461|1R3801|6P1401|8P9870|4V3730|1R1822|08P6001|06T7901|0L10501|0L10601|0L10701|1R1901|1R1922|06Q1061|06Q1051|06Q1402|06Q10-61|06Q10-51|06Q14-02", case=False, na=False)
+                     df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820|06Q1461|1R3801|6P1401|8P9870|4V3730|1R1822|08P6001|06T7901|0L10501|0L10601|0L10701|1R1901|1R1922", case=False, na=False)
         
         df = df[has_valid_consumption | is_cal | is_special]
 

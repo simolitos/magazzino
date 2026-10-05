@@ -81,9 +81,9 @@ except:
     st.error("⚠️ Errore Segreti: Configura .streamlit/secrets.toml")
     st.stop()
 
-# --- DATI MASTER ---
+# --- DATI MASTER (FUNZIONE RINOMINATA PER SVUOTARE LA CACHE DI STREAMLIT) ---
 @st.cache_data
-def load_master_data():
+def get_dati_master():
     try:
         df = pd.read_excel('dati.xlsx', engine='openpyxl')
         
@@ -111,19 +111,26 @@ def load_master_data():
         df = df[df['Descrizione'].notna() & df['Codice'].notna()] 
         df['Codice'] = df['Codice'].astype(str).str.replace('.0', '', regex=False)
         
-        # --- INIEZIONE VIRTUALE PRODOTTI MANCANTI DALL'EXCEL ---
+        # --- INIEZIONE E SOVRASCRITTURA PRODOTTI VIRTUALI ---
+        codici_puliti_check = df['Codice'].astype(str).str.replace('-', '', regex=False).str.upper()
+        
         prodotti_volanti = [
             {'Codice': '06Q1061', 'Descrizione': 'GLP systems Track Recap LARGE', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 7, 'Assay_Name': ''},
             {'Codice': '06Q1051', 'Descrizione': 'GLP systems Track Recaps SMALL', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 14, 'Assay_Name': ''},
             {'Codice': '06Q1402', 'Descrizione': 'GLP system Track Secondary Tubes (PUSH)', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 20, 'Assay_Name': ''},
-            {'Codice': '6T2101', 'Descrizione': 'Secchi Rifiuti GLP Catena (9pz)', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 2, 'Assay_Name': ''}
+            {'Codice': '6T2101', 'Descrizione': 'Secchi Rifiuti GLP Catena (9pz)', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 3, 'Assay_Name': ''}
         ]
         
-        codici_puliti = df['Codice'].astype(str).str.replace('-', '', regex=False).str.upper().tolist()
         nuove_righe = []
-        
         for p in prodotti_volanti:
-            if p['Codice'] not in codici_puliti:
+            mask = codici_puliti_check == p['Codice'].upper()
+            if mask.any():
+                # Se il codice c'è già, lo correggiamo con forza
+                df.loc[mask, 'Descrizione'] = p['Descrizione']
+                df.loc[mask, 'Categoria'] = p['Categoria']
+                df.loc[mask, 'Fabbisogno_Kit_Mese_Stimato'] = p['Fabbisogno_Kit_Mese_Stimato']
+            else:
+                # Altrimenti lo creiamo
                 nuove_righe.append(p)
                 
         if nuove_righe:
@@ -195,7 +202,7 @@ def load_master_data():
         
         is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS|Rame|Zinco|Cu-Zn|NSE|Cocaina|Oppiacei|Cannabinoidi|Anfetamina|Metanfetamine|Benzodiazepine|Metadone|Recap|Secondary Tubes PUSH|Secchi Rifiuti GLP", case=False, na=False) | \
                      df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS|Rame|Zinco|Cu-Zn|NSE|Cocaina|Oppiacei|Cannabinoidi|Anfetamina|Metanfetamine|Benzodiazepine|Metadone|Recap|Secondary Tubes PUSH|Secchi Rifiuti GLP", case=False, na=False) | \
-                     df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820|06Q1461|1R3801|6P1401|8P9870|4V3730|1R1822|08P6001|06T7901|0L10501|0L10601|0L10701|1R1901|1R1922|06Q1061|06Q1051|06Q1402|06Q10-61|06Q10-51|06Q14-02|6T2101", case=False, na=False)
+                     df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820|06Q1461|1R3801|6P1401|8P9870|4V3730|1R1822|08P6001|06T7901|0L10501|0L10601|0L10701|1R1901|1R1922|06Q1061|06Q1051|06Q1402|06Q10-61|06Q10-51|06Q14-02|6T2101|06T2101", case=False, na=False)
         
         df = df[has_valid_consumption | is_cal | is_special]
 
@@ -365,7 +372,7 @@ st.divider()
 with st.sidebar:
     st.header("🖨️ STAMPA")
     if st.button("📄 Genera PDF Giacenza"):
-        df_m = load_master_data()
+        df_m = get_dati_master()
         if 'magazzino' in st.session_state:
             df_print = df_m.copy()
             df_print['Giacenza'] = df_print['Codice'].apply(lambda x: st.session_state['magazzino'].get(x, {}).get('qty', 0))
@@ -392,7 +399,7 @@ with st.sidebar:
     else:
         st.caption("Nessun evento recente.")
 
-df_master = load_master_data()
+df_master = get_dati_master()
 
 if 'magazzino' not in st.session_state:
     with st.spinner("⏳ Sincronizzazione Cloud..."):
@@ -544,7 +551,7 @@ if not df_master.empty:
             if "06Q1061" in cod_pulito: target = 10
             elif "06Q1051" in cod_pulito: target = 20
             elif "06Q1402" in cod_pulito: target = 30
-            elif "6T2101" in cod_pulito: target = 3
+            elif "6T2101" in cod_pulito or "06T2101" in cod_pulito: target = 3
             
             target = max(target, 2)
             

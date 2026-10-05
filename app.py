@@ -1,3 +1,6 @@
+Fatto! Ho inserito il nuovo prodotto Secchi Rifiuti GLP Catena (9pz) con il codice 6T2101 all'interno dell'iniezione virtuale dell'app, così lo vedrai immediatamente senza doverlo aggiungere a mano sul file Excel.
+Come richiesto, ho anche inserito una regola nella sezione ordini che fissa e blocca il suo Target a 3 scatole.
+Ecco la Versione 65 pronta all'uso. Copia e sostituisci tutto il codice nel tuo file app.py su GitHub:
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
@@ -115,7 +118,8 @@ def load_master_data():
         prodotti_volanti = [
             {'Codice': '06Q1061', 'Descrizione': 'GLP systems Track Recap LARGE', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 7, 'Assay_Name': ''},
             {'Codice': '06Q1051', 'Descrizione': 'GLP systems Track Recaps SMALL', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 14, 'Assay_Name': ''},
-            {'Codice': '06Q1402', 'Descrizione': 'GLP system Track Secondary Tubes (PUSH)', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 20, 'Assay_Name': ''}
+            {'Codice': '06Q1402', 'Descrizione': 'GLP system Track Secondary Tubes (PUSH)', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 20, 'Assay_Name': ''},
+            {'Codice': '6T2101', 'Descrizione': 'Secchi Rifiuti GLP Catena (9pz)', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 2, 'Assay_Name': ''}
         ]
         
         codici_puliti = df['Codice'].astype(str).str.replace('-', '', regex=False).str.upper().tolist()
@@ -192,9 +196,9 @@ def load_master_data():
         has_valid_consumption = df['Kit_Mese_Numeric'] > 0
         is_cal = df['Categoria'].str.upper().str.contains("CAL", na=False)
         
-        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS|Rame|Zinco|Cu-Zn|NSE|Cocaina|Oppiacei|Cannabinoidi|Anfetamina|Metanfetamine|Benzodiazepine|Metadone|Recap|Secondary Tubes PUSH", case=False, na=False) | \
-                     df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS|Rame|Zinco|Cu-Zn|NSE|Cocaina|Oppiacei|Cannabinoidi|Anfetamina|Metanfetamine|Benzodiazepine|Metadone|Recap|Secondary Tubes PUSH", case=False, na=False) | \
-                     df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820|06Q1461|1R3801|6P1401|8P9870|4V3730|1R1822|08P6001|06T7901|0L10501|0L10601|0L10701|1R1901|1R1922", case=False, na=False)
+        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS|Rame|Zinco|Cu-Zn|NSE|Cocaina|Oppiacei|Cannabinoidi|Anfetamina|Metanfetamine|Benzodiazepine|Metadone|Recap|Secondary Tubes PUSH|Secchi Rifiuti GLP", case=False, na=False) | \
+                     df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS|Rame|Zinco|Cu-Zn|NSE|Cocaina|Oppiacei|Cannabinoidi|Anfetamina|Metanfetamine|Benzodiazepine|Metadone|Recap|Secondary Tubes PUSH|Secchi Rifiuti GLP", case=False, na=False) | \
+                     df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820|06Q1461|1R3801|6P1401|8P9870|4V3730|1R1822|08P6001|06T7901|0L10501|0L10601|0L10701|1R1901|1R1922|06Q1061|06Q1051|06Q1402|06Q10-61|06Q10-51|06Q14-02|6T2101", case=False, na=False)
         
         df = df[has_valid_consumption | is_cal | is_special]
 
@@ -543,6 +547,7 @@ if not df_master.empty:
             if "06Q1061" in cod_pulito: target = 10
             elif "06Q1051" in cod_pulito: target = 20
             elif "06Q1402" in cod_pulito: target = 30
+            elif "6T2101" in cod_pulito: target = 3
             
             target = max(target, 2)
             
@@ -801,3 +806,4 @@ if not df_master.empty:
 
 else:
     st.error("Errore Dati Master.")
+

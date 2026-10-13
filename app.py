@@ -376,9 +376,7 @@ with st.sidebar:
             df_print = df_m.copy()
             df_print['Giacenza'] = df_print['Codice'].apply(lambda x: st.session_state['magazzino'].get(x, {}).get('qty', 0))
             
-            # FILTRO RIMOSSO: Ora stampa tutto il listino, anche i prodotti a quantità zero.
-            # df_print = df_print[df_print['Giacenza'] > 0]
-            
+            # Stampa tutto, anche quelli a 0
             if not df_print.empty:
                 pdf_bytes = create_pdf_report(df_print)
                 st.download_button("📥 Scarica PDF", data=pdf_bytes, file_name=f"inventario_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf")
@@ -543,8 +541,11 @@ if not df_master.empty:
                         df_import = pd.read_csv(uploaded_file)
                     else:
                         df_import = pd.read_excel(uploaded_file, engine='openpyxl')
+                    
+                    # Normalizza i nomi delle colonne (tutto maiuscolo e pulito dagli spazi)
+                    df_import.columns = df_import.columns.str.strip().str.upper()
                         
-                    if 'Codice' in df_import.columns and 'Quantita' in df_import.columns:
+                    if 'CODICE' in df_import.columns and 'QUANTITA' in df_import.columns:
                         st.success(f"File letto con successo! Trovate {len(df_import)} righe da analizzare.")
                         
                         if st.button("🚀 ESEGUI RETTIFICA MASSIVA", type="primary"):
@@ -555,9 +556,9 @@ if not df_master.empty:
                             modificati = 0
                             
                             for index, row in df_import.iterrows():
-                                cod_import = str(row['Codice']).replace('.0', '').strip()
+                                cod_import = str(row['CODICE']).replace('.0', '').strip()
                                 try:
-                                    qty_import = int(row['Quantita'])
+                                    qty_import = int(row['QUANTITA'])
                                 except:
                                     continue
                                 

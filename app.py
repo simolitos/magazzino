@@ -118,7 +118,8 @@ def get_dati_master():
             {'Codice': '06Q1061', 'Descrizione': 'GLP systems Track Recap LARGE', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 7, 'Assay_Name': ''},
             {'Codice': '06Q1051', 'Descrizione': 'GLP systems Track Recaps SMALL', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 14, 'Assay_Name': ''},
             {'Codice': '06Q1402', 'Descrizione': 'GLP system Track Secondary Tubes (PUSH)', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 20, 'Assay_Name': ''},
-            {'Codice': '6T2101', 'Descrizione': 'Secchi Rifiuti GLP Catena (9pz)', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 3, 'Assay_Name': ''}
+            {'Codice': '6T2101', 'Descrizione': 'Secchi Rifiuti GLP Catena (9pz)', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 3, 'Assay_Name': ''},
+            {'Codice': '0LG202', 'Descrizione': 'G6PDH Reagente (NURA/B)', 'Categoria': 'RGT', 'Fabbisogno_Kit_Mese_Stimato': 2, 'Assay_Name': ''}
         ]
         
         nuove_righe = []
@@ -162,7 +163,6 @@ def get_dati_master():
         df.loc[df['Codice'].str.contains("0L10501|0L10-50", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 2
         df.loc[df['Codice'].str.contains("0L10601|0L10-60", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 2
         df.loc[df['Codice'].str.contains("1R1922|1R19-22", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 1
-        df.loc[df['Codice'].str.contains("0LG202|LG202", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 2
         
         # Forzature Droghe (DOA) - Richieste 3 scatole
         doa_pattern = "Cocaina|Oppiacei|Cannabinoidi|Anfetamina|Metanfetamine|Benzodiazepine|Metadone"
@@ -376,7 +376,6 @@ with st.sidebar:
             df_print = df_m.copy()
             df_print['Giacenza'] = df_print['Codice'].apply(lambda x: st.session_state['magazzino'].get(x, {}).get('qty', 0))
             
-            # Stampa tutto, anche quelli a 0
             if not df_print.empty:
                 pdf_bytes = create_pdf_report(df_print)
                 st.download_button("📥 Scarica PDF", data=pdf_bytes, file_name=f"inventario_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf")
@@ -542,7 +541,6 @@ if not df_master.empty:
                     else:
                         df_import = pd.read_excel(uploaded_file, engine='openpyxl')
                     
-                    # Normalizza i nomi delle colonne (tutto maiuscolo e pulito dagli spazi)
                     df_import.columns = df_import.columns.str.strip().str.upper()
                         
                     if 'CODICE' in df_import.columns and 'QUANTITA' in df_import.columns:
@@ -594,12 +592,10 @@ if not df_master.empty:
                                             
                                         ref['ultima_modifica'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                         modificati += 1
-                                        
-                                        nome_prod = df_master[df_master['Codice'] == real_code]['Descrizione'].iloc[0]
-                                        st.session_state['cloud_log'] = manage_log_cloud("Rettifica", nome_prod, f"-> {qty_import}")
 
                             if modificati > 0:
                                 update_inventory(st.session_state['magazzino'])
+                                st.session_state['cloud_log'] = manage_log_cloud("Rettifica Massiva", "Aggiornamento Excel", f"{modificati} prodotti")
                                 loader_placeholder_mass.empty()
                                 st.success(f"✅ Fatto! Aggiornati {modificati} prodotti nel database.")
                             else:

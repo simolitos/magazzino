@@ -118,7 +118,8 @@ def get_dati_master():
             {'Codice': '06Q1061', 'Descrizione': 'GLP systems Track Recap LARGE', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 7, 'Assay_Name': ''},
             {'Codice': '06Q1051', 'Descrizione': 'GLP systems Track Recaps SMALL', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 14, 'Assay_Name': ''},
             {'Codice': '06Q1402', 'Descrizione': 'GLP system Track Secondary Tubes (PUSH)', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 20, 'Assay_Name': ''},
-            {'Codice': '6T2101', 'Descrizione': 'Secchi Rifiuti GLP Catena (9pz)', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 3, 'Assay_Name': ''}
+            {'Codice': '6T2101', 'Descrizione': 'Secchi Rifiuti GLP Catena (9pz)', 'Categoria': 'CONS', 'Fabbisogno_Kit_Mese_Stimato': 3, 'Assay_Name': ''},
+            {'Codice': 'G202', 'Descrizione': 'G6PDH Reagente (NURA/B)', 'Categoria': 'RGT', 'Fabbisogno_Kit_Mese_Stimato': 2, 'Assay_Name': ''}
         ]
         
         nuove_righe = []
@@ -198,9 +199,9 @@ def get_dati_master():
         has_valid_consumption = df['Kit_Mese_Numeric'] > 0
         is_cal = df['Categoria'].str.upper().str.contains("CAL", na=False)
         
-        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS|Rame|Zinco|Cu-Zn|NSE|Cocaina|Oppiacei|Cannabinoidi|Anfetamina|Metanfetamine|Benzodiazepine|Metadone|Recap|Secondary Tubes PUSH|Secchi Rifiuti GLP", case=False, na=False) | \
-                     df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS|Rame|Zinco|Cu-Zn|NSE|Cocaina|Oppiacei|Cannabinoidi|Anfetamina|Metanfetamine|Benzodiazepine|Metadone|Recap|Secondary Tubes PUSH|Secchi Rifiuti GLP", case=False, na=False) | \
-                     df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820|06Q1461|1R3801|6P1401|8P9870|4V3730|1R1822|08P6001|06T7901|0L10501|0L10601|0L10701|1R1901|1R1922|06Q1061|06Q1051|06Q1402|06Q10-61|06Q10-51|06Q14-02|6T2101|06T2101", case=False, na=False)
+        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS|Rame|Zinco|Cu-Zn|NSE|Cocaina|Oppiacei|Cannabinoidi|Anfetamina|Metanfetamine|Benzodiazepine|Metadone|Recap|Secondary Tubes PUSH|Secchi Rifiuti GLP|G6PDH", case=False, na=False) | \
+                     df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS|Rame|Zinco|Cu-Zn|NSE|Cocaina|Oppiacei|Cannabinoidi|Anfetamina|Metanfetamine|Benzodiazepine|Metadone|Recap|Secondary Tubes PUSH|Secchi Rifiuti GLP|G6PDH", case=False, na=False) | \
+                     df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820|06Q1461|1R3801|6P1401|8P9870|4V3730|1R1822|08P6001|06T7901|0L10501|0L10601|0L10701|1R1901|1R1922|06Q1061|06Q1051|06Q1402|06Q10-61|06Q10-51|06Q14-02|6T2101|06T2101|G202", case=False, na=False)
         
         df = df[has_valid_consumption | is_cal | is_special]
 
@@ -531,17 +532,21 @@ if not df_master.empty:
         with st.expander("📥 CARICAMENTO MASSIVO DA EXCEL (Inventario/Rettifica Veloce)"):
             st.write("Carica un file Excel per aggiornare automaticamente la giacenza di più prodotti contemporaneamente. Il file deve avere le colonne **Codice** e **Quantita**.")
             
-            uploaded_file = st.file_uploader("Seleziona il file Excel:", type=['xlsx', 'xls'])
+            uploaded_file = st.file_uploader("Seleziona il file Excel:", type=['xlsx', 'xls', 'csv'])
             
             if uploaded_file is not None:
                 try:
-                    df_import = pd.read_excel(uploaded_file, engine='openpyxl')
+                    if uploaded_file.name.endswith('.csv'):
+                        df_import = pd.read_csv(uploaded_file)
+                    else:
+                        df_import = pd.read_excel(uploaded_file, engine='openpyxl')
+                        
                     if 'Codice' in df_import.columns and 'Quantita' in df_import.columns:
                         st.success(f"File letto con successo! Trovate {len(df_import)} righe da analizzare.")
                         
                         if st.button("🚀 ESEGUI RETTIFICA MASSIVA", type="primary"):
                             loader_placeholder_mass = st.empty()
-                            loader_placeholder_mass.markdown("""<div id="custom-loader"><div class="spinner"></div><div class="loading-text">Elaborazione Excel in corso...</div></div>""", unsafe_allow_html=True)
+                            loader_placeholder_mass.markdown("""<div id="custom-loader"><div class="spinner"></div><div class="loading-text">Elaborazione in corso...</div></div>""", unsafe_allow_html=True)
                             
                             valid_master_codes = df_master['Codice'].astype(str).tolist()
                             modificati = 0
@@ -551,9 +556,8 @@ if not df_master.empty:
                                 try:
                                     qty_import = int(row['Quantita'])
                                 except:
-                                    continue # Salta se la quantità non è un numero
+                                    continue
                                 
-                                # Cerca se il codice importato esiste nel nostro database
                                 matching_codes = [c for c in valid_master_codes if cod_import in c or c in cod_import]
                                 
                                 if matching_codes:
@@ -587,9 +591,8 @@ if not df_master.empty:
                                         ref['ultima_modifica'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                         modificati += 1
                                         
-                                        # Scrive il log in background
                                         nome_prod = df_master[df_master['Codice'] == real_code]['Descrizione'].iloc[0]
-                                        st.session_state['cloud_log'] = manage_log_cloud("Rettifica Excel", nome_prod, f"-> {qty_import}")
+                                        st.session_state['cloud_log'] = manage_log_cloud("Rettifica", nome_prod, f"-> {qty_import}")
 
                             if modificati > 0:
                                 update_inventory(st.session_state['magazzino'])
@@ -600,7 +603,7 @@ if not df_master.empty:
                                 st.info("Nessuna modifica necessaria. Le quantità nel file erano identiche a quelle già presenti in Cloud.")
                                 
                     else:
-                        st.error("❌ Errore: Il file Excel non contiene le colonne 'Codice' o 'Quantita'. Controlla l'intestazione.")
+                        st.error("❌ Errore: Il file non contiene le colonne 'Codice' o 'Quantita'. Controlla l'intestazione.")
                 except Exception as e:
                     st.error(f"Errore nella lettura del file: {e}")
 
@@ -628,6 +631,7 @@ if not df_master.empty:
             elif "06Q1051" in cod_pulito: target = 20
             elif "06Q1402" in cod_pulito: target = 30
             elif "6T2101" in cod_pulito or "06T2101" in cod_pulito: target = 3
+            elif "G202" in cod_pulito: target = 2
             
             target = max(target, 2)
             

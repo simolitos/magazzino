@@ -162,6 +162,7 @@ def get_dati_master():
         df.loc[df['Codice'].str.contains("0L10501|0L10-50", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 2
         df.loc[df['Codice'].str.contains("0L10601|0L10-60", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 2
         df.loc[df['Codice'].str.contains("1R1922|1R19-22", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 1
+        df.loc[df['Codice'].str.contains("0LG202|LG202", case=False, na=False), 'Fabbisogno_Kit_Mese_Stimato'] = 2
         
         # Forzature Droghe (DOA) - Richieste 3 scatole
         doa_pattern = "Cocaina|Oppiacei|Cannabinoidi|Anfetamina|Metanfetamine|Benzodiazepine|Metadone"
@@ -198,9 +199,9 @@ def get_dati_master():
         has_valid_consumption = df['Kit_Mese_Numeric'] > 0
         is_cal = df['Categoria'].str.upper().str.contains("CAL", na=False)
         
-        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS|Rame|Zinco|Cu-Zn|NSE|Cocaina|Oppiacei|Cannabinoidi|Anfetamina|Metanfetamine|Benzodiazepine|Metadone|Recap|Secondary Tubes PUSH|Secchi Rifiuti GLP", case=False, na=False) | \
-                     df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS|Rame|Zinco|Cu-Zn|NSE|Cocaina|Oppiacei|Cannabinoidi|Anfetamina|Metanfetamine|Benzodiazepine|Metadone|Recap|Secondary Tubes PUSH|Secchi Rifiuti GLP", case=False, na=False) | \
-                     df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820|06Q1461|1R3801|6P1401|8P9870|4V3730|1R1822|08P6001|06T7901|0L10501|0L10601|0L10701|1R1901|1R1922|06Q1061|06Q1051|06Q1402|06Q10-61|06Q10-51|06Q14-02|6T2101|06T2101", case=False, na=False)
+        is_special = df['Descrizione'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS|Rame|Zinco|Cu-Zn|NSE|Cocaina|Oppiacei|Cannabinoidi|Anfetamina|Metanfetamine|Benzodiazepine|Metadone|Recap|Secondary Tubes PUSH|Secchi Rifiuti GLP|G6PD", case=False, na=False) | \
+                     df['Assay_Name'].str.contains("VANCOMICINA|BARBITURICI|TRAB|HBsAg Quant|Tireoglobulina|ICT SAMPLE DILUENT|Omocisteina|SECONDARY TUBES|Sample Cups|Reaction Vessels|Maintenance Solutions|Mioglobina|Procalcitonina|MC MCC CALS|Rame|Zinco|Cu-Zn|NSE|Cocaina|Oppiacei|Cannabinoidi|Anfetamina|Metanfetamine|Benzodiazepine|Metadone|Recap|Secondary Tubes PUSH|Secchi Rifiuti GLP|G6PD", case=False, na=False) | \
+                     df['Codice'].str.contains("8P0852|9P4922|7P5320|09P2820|06Q1461|1R3801|6P1401|8P9870|4V3730|1R1822|08P6001|06T7901|0L10501|0L10601|0L10701|1R1901|1R1922|06Q1061|06Q1051|06Q1402|06Q10-61|06Q10-51|06Q14-02|6T2101|06T2101|0LG202", case=False, na=False)
         
         df = df[has_valid_consumption | is_cal | is_special]
 
@@ -630,6 +631,7 @@ if not df_master.empty:
             elif "06Q1051" in cod_pulito: target = 20
             elif "06Q1402" in cod_pulito: target = 30
             elif "6T2101" in cod_pulito or "06T2101" in cod_pulito: target = 3
+            elif "0LG202" in cod_pulito or "LG202" in cod_pulito: target = 2
             
             target = max(target, 2)
             

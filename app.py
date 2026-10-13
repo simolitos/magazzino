@@ -592,15 +592,19 @@ if not df_master.empty:
                                             
                                         ref['ultima_modifica'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                         modificati += 1
+                                    else:
+                                        # La quantità è uguale, ma aggiorniamo la data per resettare l'allarme "DA VERIFICARE"
+                                        ref['ultima_modifica'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                        modificati += 1
 
                             if modificati > 0:
                                 update_inventory(st.session_state['magazzino'])
                                 st.session_state['cloud_log'] = manage_log_cloud("Rettifica Massiva", "Aggiornamento Excel", f"{modificati} prodotti")
                                 loader_placeholder_mass.empty()
-                                st.success(f"✅ Fatto! Aggiornati {modificati} prodotti nel database.")
+                                st.success(f"✅ Fatto! Elaborati e confermati {modificati} prodotti nel database.")
                             else:
                                 loader_placeholder_mass.empty()
-                                st.info("Nessuna modifica necessaria. Le quantità nel file erano identiche a quelle già presenti in Cloud.")
+                                st.info("Nessuna riga valida trovata per l'aggiornamento.")
                                 
                     else:
                         st.error("❌ Errore: Il file non contiene le colonne 'Codice' o 'Quantita'. Controlla l'intestazione.")

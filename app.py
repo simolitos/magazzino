@@ -81,7 +81,7 @@ except:
     st.error("⚠️ Errore Segreti: Configura .streamlit/secrets.toml")
     st.stop()
 
-# --- DATI MASTER (FUNZIONE RINOMINATA PER SVUOTARE LA CACHE DI STREAMLIT) ---
+# --- DATI MASTER ---
 @st.cache_data
 def get_dati_master():
     try:
@@ -125,12 +125,10 @@ def get_dati_master():
         for p in prodotti_volanti:
             mask = codici_puliti_check == p['Codice'].upper()
             if mask.any():
-                # Se il codice c'è già, lo correggiamo con forza
                 df.loc[mask, 'Descrizione'] = p['Descrizione']
                 df.loc[mask, 'Categoria'] = p['Categoria']
                 df.loc[mask, 'Fabbisogno_Kit_Mese_Stimato'] = p['Fabbisogno_Kit_Mese_Stimato']
             else:
-                # Altrimenti lo creiamo
                 nuove_righe.append(p)
                 
         if nuove_righe:
@@ -421,7 +419,6 @@ if not df_master.empty:
                 return f"{row['Descrizione']}{assay_str} (Disp: {g})"
             
             opzioni = df_master.apply(get_label, axis=1).tolist()
-            
             scelta = st.selectbox("Cerca Prodotto (Nome, Codice, Assay):", opzioni, index=None, placeholder="Digita per cercare...")
             
         if scelta:
@@ -436,7 +433,7 @@ if not df_master.empty:
                     st.warning("⚠️ Calibratore")
 
             with st.container(border=True):
-                st.subheader("🛠️ Pannello Azioni")
+                st.subheader("🛠️ Pannello Azioni Singole")
                 c1, c2, c3 = st.columns([1, 2, 1])
                 with c1:
                     qty_input = st.number_input("Quantità", min_value=1, value=1, step=1)
@@ -527,6 +524,85 @@ if not df_master.empty:
                     if codice not in st.session_state['magazzino']:
                         st.session_state['magazzino'][codice] = {'qty': 0, 'scadenze': [], 'ultima_modifica': '2000-01-01 00:00:00'}
                     open_reset_dialog(codice, row_art['Descrizione'])
+
+        st.markdown("<br><hr>", unsafe_allow_html=True)
+        
+        # --- NUOVA SEZIONE: RETTIFICA MASSIVA EXCEL ---
+        with st.expander("📥 CARICAMENTO MASSIVO DA EXCEL (Inventario/Rettifica Veloce)"):
+            st.write("Carica un file Excel per aggiornare automaticamente la giacenza di più prodotti contemporaneamente. Il file deve avere le colonne **Codice** e **Quantita**.")
+            
+            uploaded_file = st.file_uploader("Seleziona il file Excel:", type=['xlsx', 'xls'])
+            
+            if uploaded_file is not None:
+                try:
+                    df_import = pd.read_excel(uploaded_file, engine='openpyxl')
+                    if 'Codice' in df_import.columns and 'Quantita' in df_import.columns:
+                        st.success(f"File letto con successo! Trovate {len(df_import)} righe da analizzare.")
+                        
+                        if st.button("🚀 ESEGUI RETTIFICA MASSIVA", type="primary"):
+                            loader_placeholder_mass = st.empty()
+                            loader_placeholder_mass.markdown("""<div id="custom-loader"><div class="spinner"></div><div class="loading-text">Elaborazione Excel in corso...</div></div>""", unsafe_allow_html=True)
+                            
+                            valid_master_codes = df_master['Codice'].astype(str).tolist()
+                            modificati = 0
+                            
+                            for index, row in df_import.iterrows():
+                                cod_import = str(row['Codice']).replace('.0', '').strip()
+                                try:
+                                    qty_import = int(row['Quantita'])
+                                except:
+                                    continue # Salta se la quantità non è un numero
+                                
+                                # Cerca se il codice importato esiste nel nostro database
+                                matching_codes = [c for c in valid_master_codes if cod_import in c or c in cod_import]
+                                
+                                if matching_codes:
+                                    real_code = matching_codes[0]
+                                    
+                                    if real_code not in st.session_state['magazzino']:
+                                        st.session_state['magazzino'][real_code] = {'qty': 0, 'scadenze': [], 'ultima_modifica': '2000-01-01 00:00:00'}
+                                    
+                                    ref = st.session_state['magazzino'][real_code]
+                                    old_qty = ref['qty']
+                                    
+                                    if old_qty != qty_import:
+                                        diff = qty_import - old_qty
+                                        ref['qty'] = qty_import
+                                        
+                                        if diff > 0: 
+                                            ref['scadenze'].append({'display': 'MASSIVA', 'sort': '9999-12', 'qty': diff})
+                                        else:
+                                            da_togliere = abs(diff)
+                                            new_scad = []
+                                            for batch in ref['scadenze']:
+                                                if da_togliere > 0:
+                                                    if batch['qty'] > da_togliere:
+                                                        batch['qty'] -= da_togliere
+                                                        da_togliere = 0
+                                                        new_scad.append(batch)
+                                                    else: da_togliere -= batch['qty']
+                                                else: new_scad.append(batch)
+                                            ref['scadenze'] = new_scad
+                                            
+                                        ref['ultima_modifica'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                        modificati += 1
+                                        
+                                        # Scrive il log in background
+                                        nome_prod = df_master[df_master['Codice'] == real_code]['Descrizione'].iloc[0]
+                                        st.session_state['cloud_log'] = manage_log_cloud("Rettifica Excel", nome_prod, f"-> {qty_import}")
+
+                            if modificati > 0:
+                                update_inventory(st.session_state['magazzino'])
+                                loader_placeholder_mass.empty()
+                                st.success(f"✅ Fatto! Aggiornati {modificati} prodotti nel database.")
+                            else:
+                                loader_placeholder_mass.empty()
+                                st.info("Nessuna modifica necessaria. Le quantità nel file erano identiche a quelle già presenti in Cloud.")
+                                
+                    else:
+                        st.error("❌ Errore: Il file Excel non contiene le colonne 'Codice' o 'Quantita'. Controlla l'intestazione.")
+                except Exception as e:
+                    st.error(f"Errore nella lettura del file: {e}")
 
     # === TAB 2: ORDINI ===
     with tab_ordini:

@@ -375,7 +375,10 @@ with st.sidebar:
         if 'magazzino' in st.session_state:
             df_print = df_m.copy()
             df_print['Giacenza'] = df_print['Codice'].apply(lambda x: st.session_state['magazzino'].get(x, {}).get('qty', 0))
-            df_print = df_print[df_print['Giacenza'] > 0]
+            
+            # FILTRO RIMOSSO: Ora stampa tutto il listino, anche i prodotti a quantità zero.
+            # df_print = df_print[df_print['Giacenza'] > 0]
+            
             if not df_print.empty:
                 pdf_bytes = create_pdf_report(df_print)
                 st.download_button("📥 Scarica PDF", data=pdf_bytes, file_name=f"inventario_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf")

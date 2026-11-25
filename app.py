@@ -286,10 +286,20 @@ def fetch_only_log():
         return df_log
     except: return pd.DataFrame()
 
-def create_target_excel(df_m):
+def create_target_excel(df_m, magazzino_dict):
     rows = []
     for _, row in df_m.iterrows():
-        cod_pulito = str(row['Codice']).upper().replace("-", "").strip()
+        cod = str(row['Codice'])
+        
+        # Esclude i prodotti contrassegnati con quantità 999 (esclusi/non attivi)
+        qty_attuale = magazzino_dict.get(cod, {}).get('qty', 0)
+        try:
+            if int(float(qty_attuale)) == 999:
+                continue
+        except (ValueError, TypeError):
+            pass
+
+        cod_pulito = cod.upper().replace("-", "").strip()
         consumo = row.get('Kit_Mese_Numeric', 0)
         cat_upper = str(row['Categoria']).upper()
         
@@ -308,23 +318,27 @@ def create_target_excel(df_m):
         if "CAL" in cat_upper:
             target_max = max(target_max, MIN_SCORTA_CAL)
             
-        # Calcolo Target MIN (1 mese di copertura o scorta minima calibratori)
+        # Calcolo Target MIN: 3 pezzi per i calibratori, copertura di 2 settimane (0.50 mesi) per il resto
         if "CAL" in cat_upper:
-            target_min = MIN_SCORTA_CAL
+            target_min = 3
         else:
-            target_min = max(1, math.ceil(consumo * MESI_COPERTURA))
-            if target_min >= target_max:
-                target_min = max(1, target_max - 1)
+            target_min = max(1, math.ceil(consumo * MESI_BUFFER))
+            if target_min > target_max:
+                target_min = target_max
                 
         rows.append({
             'Categoria': str(row['Categoria']),
-            'LN ABBOTT': str(row['Codice']),
+            'LN ABBOTT': cod,
             'Descrizione prodotto': str(row['Descrizione']),
             'Target MIN': int(target_min),
             'TARGET MAX': int(target_max)
         })
         
-    df_out = pd.DataFrame(rows).sort_values(by=['Categoria', 'Descrizione prodotto'])
+    if rows:
+        df_out = pd.DataFrame(rows).sort_values(by=['Categoria', 'Descrizione prodotto'])
+    else:
+        df_out = pd.DataFrame(columns=['Categoria', 'LN ABBOTT', 'Descrizione prodotto', 'Target MIN', 'TARGET MAX'])
+
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         df_out.to_excel(writer, index=False, sheet_name='Target_Fornitore')
@@ -411,13 +425,19 @@ st.markdown("""
     """, unsafe_allow_html=True)
 st.divider()
 
+# --- CARICAMENTO DATI INIZIALE ---
+df_master = get_dati_master()
+
+if 'magazzino' not in st.session_state:
+    with st.spinner("⏳ Sincronizzazione Cloud..."):
+        st.session_state['magazzino'] = fetch_inventory()
+
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("🖨️ STAMPA & ESPORTA")
     if st.button("📄 Genera PDF Giacenza", use_container_width=True):
-        df_m = get_dati_master()
-        if 'magazzino' in st.session_state:
-            df_print = df_m.copy()
+        if not df_master.empty and 'magazzino' in st.session_state:
+            df_print = df_master.copy()
             df_print['Giacenza'] = df_print['Codice'].apply(lambda x: st.session_state['magazzino'].get(x, {}).get('qty', 0))
             
             if not df_print.empty:
@@ -426,9 +446,8 @@ with st.sidebar:
             else: st.warning("Magazzino vuoto!")
 
     if st.button("📊 Genera Excel Target Fornitore", use_container_width=True):
-        df_m = get_dati_master()
-        if not df_m.empty:
-            excel_target_bytes = create_target_excel(df_m)
+        if not df_master.empty and 'magazzino' in st.session_state:
+            excel_target_bytes = create_target_excel(df_master, st.session_state['magazzino'])
             st.download_button(
                 "📥 Scarica Excel Target",
                 data=excel_target_bytes,
@@ -455,12 +474,6 @@ with st.sidebar:
         st.dataframe(show_log, hide_index=True, use_container_width=True, height=log_height)
     else:
         st.caption("Nessun evento recente.")
-
-df_master = get_dati_master()
-
-if 'magazzino' not in st.session_state:
-    with st.spinner("⏳ Sincronizzazione Cloud..."):
-        st.session_state['magazzino'] = fetch_inventory()
 
 if not df_master.empty:
 

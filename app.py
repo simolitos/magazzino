@@ -286,6 +286,50 @@ def fetch_only_log():
         return df_log
     except: return pd.DataFrame()
 
+def create_target_excel(df_m):
+    rows = []
+    for _, row in df_m.iterrows():
+        cod_pulito = str(row['Codice']).upper().replace("-", "").strip()
+        consumo = row.get('Kit_Mese_Numeric', 0)
+        cat_upper = str(row['Categoria']).upper()
+        
+        # Calcolo TARGET MAX (identico alla logica ordini)
+        target_max = math.ceil(consumo * TARGET_MESI)
+        if "4V3730" in cod_pulito: target_max += 1
+        elif "1R1822" in cod_pulito: target_max += 2
+        
+        if "06Q1061" in cod_pulito: target_max = 10
+        elif "06Q1051" in cod_pulito: target_max = 20
+        elif "06Q1402" in cod_pulito: target_max = 30
+        elif "6T2101" in cod_pulito or "06T2101" in cod_pulito: target_max = 3
+        elif "0LG202" in cod_pulito or "LG202" in cod_pulito: target_max = 2
+        
+        target_max = max(target_max, 2)
+        if "CAL" in cat_upper:
+            target_max = max(target_max, MIN_SCORTA_CAL)
+            
+        # Calcolo Target MIN (1 mese di copertura o scorta minima calibratori)
+        if "CAL" in cat_upper:
+            target_min = MIN_SCORTA_CAL
+        else:
+            target_min = max(1, math.ceil(consumo * MESI_COPERTURA))
+            if target_min >= target_max:
+                target_min = max(1, target_max - 1)
+                
+        rows.append({
+            'Categoria': str(row['Categoria']),
+            'LN ABBOTT': str(row['Codice']),
+            'Descrizione prodotto': str(row['Descrizione']),
+            'Target MIN': int(target_min),
+            'TARGET MAX': int(target_max)
+        })
+        
+    df_out = pd.DataFrame(rows).sort_values(by=['Categoria', 'Descrizione prodotto'])
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df_out.to_excel(writer, index=False, sheet_name='Target_Fornitore')
+    return buffer.getvalue()
+
 class PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 15)
@@ -369,8 +413,8 @@ st.divider()
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.header("🖨️ STAMPA")
-    if st.button("📄 Genera PDF Giacenza"):
+    st.header("🖨️ STAMPA & ESPORTA")
+    if st.button("📄 Genera PDF Giacenza", use_container_width=True):
         df_m = get_dati_master()
         if 'magazzino' in st.session_state:
             df_print = df_m.copy()
@@ -378,8 +422,22 @@ with st.sidebar:
             
             if not df_print.empty:
                 pdf_bytes = create_pdf_report(df_print)
-                st.download_button("📥 Scarica PDF", data=pdf_bytes, file_name=f"inventario_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf")
+                st.download_button("📥 Scarica PDF", data=pdf_bytes, file_name=f"inventario_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf", use_container_width=True)
             else: st.warning("Magazzino vuoto!")
+
+    if st.button("📊 Genera Excel Target Fornitore", use_container_width=True):
+        df_m = get_dati_master()
+        if not df_m.empty:
+            excel_target_bytes = create_target_excel(df_m)
+            st.download_button(
+                "📥 Scarica Excel Target",
+                data=excel_target_bytes,
+                file_name=f"target_min_max_abbott_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+        else:
+            st.warning("Nessun dato disponibile!")
 
     st.divider()
     st.header("📋 LOG (Ultimi 30gg)")
